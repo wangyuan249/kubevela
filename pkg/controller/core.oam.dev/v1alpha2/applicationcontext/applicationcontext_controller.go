@@ -75,15 +75,17 @@ func (r *Reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		return reconcile.Result{}, errors.Wrap(err, errGetAppRevision)
 	}
 
-	// copy the status
-	acRaw := appRevision.Spec.ApplicationConfiguration
-	appConfig, err := ConvertRawExtention2AppConfig(acRaw)
+	// copy the status from appContext to appConfig
+	appConfig, err := ConvertRawExtention2AppConfig(appRevision.Spec.ApplicationConfiguration)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 	appConfig.Status = appContext.Status
 	// the name of the appConfig has to be the same as the appContext
-	appConfig.ObjectMeta = metav1.ObjectMeta{Namespace: appContext.Namespace, Name: appContext.Name, UID: appContext.UID}
+	appConfig.ObjectMeta = metav1.ObjectMeta{Namespace: appContext.Namespace,
+		Name: appContext.Name, UID: appContext.UID}
+	// makes sure that the appConfig's owner is the same as the appContext
+	appConfig.SetOwnerReferences(appContext.GetOwnerReferences())
 	// call into the old ac Reconciler and copy the status back
 	acReconciler := ac.NewReconciler(r.mgr, dm, r.log, ac.WithRecorder(r.record), ac.WithApplyOnceOnlyMode(r.applyMode))
 	reconResult := acReconciler.ACReconcile(ctx, appConfig, r.log)
