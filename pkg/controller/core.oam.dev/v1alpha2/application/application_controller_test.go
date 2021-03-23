@@ -43,7 +43,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha2"
-	"github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1alpha2/applicationcontext"
 	"github.com/oam-dev/kubevela/pkg/controller/utils"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
@@ -374,7 +373,7 @@ var _ = Describe("Test Application Controller", func() {
 
 		gotTrait := unstructured.Unstructured{}
 
-		ac, err := applicationcontext.ConvertRawExtention2AppConfig(appRevision.Spec.ApplicationConfiguration)
+		ac, err := util.RawExtension2AppConfig(appRevision.Spec.ApplicationConfiguration)
 		Expect(err).Should(BeNil())
 		Expect(json.Unmarshal(ac.Spec.Components[0].Traits[0].Trait.Raw,
 			&gotTrait)).Should(BeNil())
@@ -448,7 +447,7 @@ var _ = Describe("Test Application Controller", func() {
 
 		Expect(appContext.Spec.ApplicationRevisionName).Should(Equal(appRevision.Name))
 
-		ac, err := applicationcontext.ConvertRawExtention2AppConfig(appRevision.Spec.ApplicationConfiguration)
+		ac, err := util.RawExtension2AppConfig(appRevision.Spec.ApplicationConfiguration)
 		Expect(err).Should(BeNil())
 		Expect(len(ac.Spec.Components[0].Traits)).Should(BeEquivalentTo(2))
 		Expect(ac.Spec.Components[0].ComponentName).Should(BeEmpty())
@@ -480,7 +479,7 @@ var _ = Describe("Test Application Controller", func() {
 				},
 			},
 		}}
-		ac, err = applicationcontext.ConvertRawExtention2AppConfig(appRevision.Spec.ApplicationConfiguration)
+		ac, err = util.RawExtension2AppConfig(appRevision.Spec.ApplicationConfiguration)
 		Expect(err).Should(BeNil())
 		Expect(json.Unmarshal(ac.Spec.Components[0].Traits[0].Trait.Raw, &gotTrait)).Should(BeNil())
 		fmt.Println(cmp.Diff(expectServiceTrait, gotTrait))
@@ -549,7 +548,7 @@ var _ = Describe("Test Application Controller", func() {
 		Expect(appContext.Spec.ApplicationRevisionName).Should(Equal(appRevision.Name))
 
 		gotTrait := unstructured.Unstructured{}
-		ac, err := applicationcontext.ConvertRawExtention2AppConfig(appRevision.Spec.ApplicationConfiguration)
+		ac, err := util.RawExtension2AppConfig(appRevision.Spec.ApplicationConfiguration)
 		Expect(err).Should(BeNil())
 		Expect(json.Unmarshal(ac.Spec.Components[0].Traits[0].Trait.Raw, &gotTrait)).Should(BeNil())
 		Expect(gotTrait).Should(BeEquivalentTo(expectScalerTrait("myweb4", app.Name)))
@@ -619,7 +618,7 @@ var _ = Describe("Test Application Controller", func() {
 		Expect(appContext.Spec.ApplicationRevisionName).Should(Equal(appRevision.Name))
 
 		gotTrait := unstructured.Unstructured{}
-		ac, err := applicationcontext.ConvertRawExtention2AppConfig(appRevision.Spec.ApplicationConfiguration)
+		ac, err := util.RawExtension2AppConfig(appRevision.Spec.ApplicationConfiguration)
 		Expect(err).Should(BeNil())
 		Expect(json.Unmarshal(ac.Spec.Components[0].Traits[0].Trait.Raw, &gotTrait)).Should(BeNil())
 		Expect(gotTrait).Should(BeEquivalentTo(expectScalerTrait("myweb5", app.Name)))
@@ -779,7 +778,7 @@ var _ = Describe("Test Application Controller", func() {
 		Expect(appContext.Spec.ApplicationRevisionName).Should(Equal(appRevision.Name))
 		gotTrait := unstructured.Unstructured{}
 
-		ac, err := applicationcontext.ConvertRawExtention2AppConfig(appRevision.Spec.ApplicationConfiguration)
+		ac, err := util.RawExtension2AppConfig(appRevision.Spec.ApplicationConfiguration)
 		Expect(err).Should(BeNil())
 		Expect(json.Unmarshal(ac.Spec.Components[0].Traits[0].Trait.Raw, &gotTrait)).Should(BeNil())
 		Expect(gotTrait).Should(BeEquivalentTo(expTrait))
@@ -945,7 +944,7 @@ var _ = Describe("Test Application Controller", func() {
 		Expect(component.Status.LatestRevision).ShouldNot(BeNil())
 		Expect(component.Status.LatestRevision.Revision).Should(BeEquivalentTo(1))
 		// check that the new appconfig has the correct annotation and labels
-		ac, err := applicationcontext.ConvertRawExtention2AppConfig(appRevision.Spec.ApplicationConfiguration)
+		ac, err := util.RawExtension2AppConfig(appRevision.Spec.ApplicationConfiguration)
 		Expect(err).Should(BeNil())
 		Expect(ac.GetAnnotations()[oam.AnnotationAppRollout]).Should(Equal(strconv.FormatBool(true)))
 		Expect(ac.GetAnnotations()["keep"]).Should(Equal("true"))

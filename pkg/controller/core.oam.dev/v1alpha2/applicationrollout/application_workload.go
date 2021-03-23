@@ -3,22 +3,119 @@ package applicationrollout
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/pkg/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
-	corev1alpha2 "github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha2"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha2"
 	"github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1alpha2/applicationconfiguration"
 	"github.com/oam-dev/kubevela/pkg/controller/utils"
+	"github.com/oam-dev/kubevela/pkg/oam"
 	oamutil "github.com/oam-dev/kubevela/pkg/oam/util"
 	appUtil "github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1alpha2/applicationdeployment"
 )
 
+// getTargetApps try to locate the target appRevision and appContext that is responsible for the target
+// we will create a new appContext when it's not found
+func (r *Reconciler) getTargetApps(ctx context.Context, targetAppRevisionName string) (*v1alpha2.ApplicationRevision,
+	*v1alpha2.ApplicationContext, error) {
+	var appRevision v1alpha2.ApplicationRevision
+	var appContext v1alpha2.ApplicationContext
+	namespaceName := oamutil.GetDefinitionNamespaceWithCtx(ctx)
+	if err := r.Get(ctx, ktypes.NamespacedName{Namespace: namespaceName, Name: targetAppRevisionName},
+		&appRevision); err != nil {
+		klog.ErrorS(err, "cannot locate target application revision", "target application revision",
+			klog.KRef(namespaceName, targetAppRevisionName))
+		return nil, nil, err
+	}
+	if err := r.Get(ctx, ktypes.NamespacedName{Namespace: namespaceName, Name: targetAppRevisionName},
+		&appContext); err != nil {
+		if apierrors.IsNotFound(err) {
+			klog.ErrorS(err, "target application context does not exist, create one", "target application revision",
+				klog.KRef(namespaceName, targetAppRevisionName))
+			appContext, err = r.createAppContext(ctx, &appRevision)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		klog.ErrorS(err, "cannot locate target application revision", "target application revision",
+			klog.KRef(namespaceName, targetAppRevisionName))
+		return nil, nil, err
+	}
+
+	return &appRevision, &appContext, nil
+}
+
+// getTargetApps try to locate the source appRevision and appContext that is responsible for the source
+func (r *Reconciler) getSourceAppContexts(ctx context.Context, sourceAppRevisionName string) (*v1alpha2.
+	ApplicationRevision, *v1alpha2.ApplicationContext, error) {
+	var appRevision v1alpha2.ApplicationRevision
+	var appContext v1alpha2.ApplicationContext
+	namespaceName := oamutil.GetDefinitionNamespaceWithCtx(ctx)
+	if err := r.Get(ctx, ktypes.NamespacedName{Namespace: namespaceName, Name: sourceAppRevisionName},
+		&appRevision); err != nil {
+		klog.ErrorS(err, "cannot locate source application revision", "source application revision",
+			klog.KRef(namespaceName, sourceAppRevisionName))
+		return nil, nil, err
+	}
+	// the source app has to exist or there is nothing for us to upgrade from
+	if err := r.Get(ctx, ktypes.NamespacedName{Namespace: namespaceName, Name: sourceAppRevisionName},
+		&appContext); err != nil {
+		// TODO: use the app name as the source Context to upgrade from none-rolling application to rolling
+		klog.ErrorS(err, "cannot locate source application revision", "source application revision",
+			klog.KRef(namespaceName, sourceAppRevisionName))
+		return nil, nil, err
+	}
+	// set the AC as rolling
+	oamutil.AddAnnotations(&appContext, map[string]string{oam.AnnotationAppRollout: strconv.FormatBool(true)})
+	err := r.Update(ctx, &appContext)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &appRevision, &appContext, nil
+}
+
+func (r *Reconciler) createAppContext(ctx context.Context, appRevision *v1alpha2.ApplicationRevision) (v1alpha2.
+	ApplicationContext, error) {
+	namespaceName := oamutil.GetDefinitionNamespaceWithCtx(ctx)
+	appContext := v1alpha2.ApplicationContext{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            appRevision.GetName(),
+			Namespace:       namespaceName,
+			Labels:          appRevision.GetLabels(),
+			Annotations:     appRevision.GetAnnotations(),
+			OwnerReferences: appRevision.GetOwnerReferences(),
+		},
+		Spec: v1alpha2.ApplicationContextSpec{
+			ApplicationRevisionName: appRevision.GetName(),
+		},
+	}
+	// set the AC as rolling
+	oamutil.AddAnnotations(&appContext, map[string]string{oam.AnnotationAppRollout: strconv.FormatBool(true)})
+	err := r.Create(ctx, &appContext)
+	return appContext, err
+}
+
 // extractWorkloads extracts the workloads from the source and target applicationConfig
-func (r *Reconciler) extractWorkloads(ctx context.Context, componentList []string, targetApp,
-	sourceApp *corev1alpha2.ApplicationConfiguration) (*unstructured.Unstructured, *unstructured.Unstructured, error) {
+func (r *Reconciler) extractWorkloads(ctx context.Context, componentList []string, targetAppRevision,
+	sourceAppRevision *v1alpha2.ApplicationRevision) (*unstructured.Unstructured, *unstructured.Unstructured, error) {
 	var componentName string
+	var sourceApp *v1alpha2.ApplicationConfiguration
+	targetApp, err := oamutil.RawExtension2AppConfig(targetAppRevision.Spec.ApplicationConfiguration)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sourceAppRevision != nil {
+		sourceApp, err = oamutil.RawExtension2AppConfig(sourceAppRevision.Spec.ApplicationConfiguration)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	if len(componentList) == 0 {
 		// we need to find a default component
 		commons := appUtil.FindCommonComponent(targetApp, sourceApp)
@@ -52,8 +149,8 @@ func (r *Reconciler) extractWorkloads(ctx context.Context, componentList []strin
 
 // fetchWorkload based on the component and the appConfig
 func (r *Reconciler) fetchWorkload(ctx context.Context, componentName string,
-	targetApp *corev1alpha2.ApplicationConfiguration) (*unstructured.Unstructured, error) {
-	var targetAcc *corev1alpha2.ApplicationConfigurationComponent
+	targetApp *v1alpha2.ApplicationConfiguration) (*unstructured.Unstructured, error) {
+	var targetAcc *v1alpha2.ApplicationConfigurationComponent
 	for _, acc := range targetApp.Spec.Components {
 		if utils.ExtractComponentName(acc.RevisionName) == componentName {
 			targetAcc = acc.DeepCopy()
