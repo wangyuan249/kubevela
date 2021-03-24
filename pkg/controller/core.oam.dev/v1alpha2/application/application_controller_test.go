@@ -1277,7 +1277,7 @@ var _ = Describe("Test Application Controller", func() {
 			Namespace: curApp.Namespace,
 			Name:      curApp.Status.LatestRevision.Name,
 		}, appRevision)).Should(BeNil())
-		appConfig, err := applicationcontext.ConvertRawExtention2AppConfig(appRevision.Spec.ApplicationConfiguration)
+		appConfig, err := util.RawExtension2AppConfig(appRevision.Spec.ApplicationConfiguration)
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(string(appConfig.Spec.Components[0].Traits[0].Trait.Raw)).Should(BeEquivalentTo("{\"apiVersion\":\"v1\",\"kind\":\"Service\",\"metadata\":{\"labels\":{\"app.oam.dev/component\":\"myweb\",\"app.oam.dev/name\":\"app-import-pkg\",\"trait.oam.dev/resource\":\"service\",\"trait.oam.dev/type\":\"ingress-import\"},\"name\":\"myweb\"},\"spec\":{\"ports\":[{\"port\":80,\"targetPort\":80}],\"selector\":{\"app.oam.dev/component\":\"myweb\"}}}"))
 		Expect(string(appConfig.Spec.Components[0].Traits[1].Trait.Raw)).Should(BeEquivalentTo("{\"apiVersion\":\"networking.k8s.io/v1beta1\",\"kind\":\"Ingress\",\"metadata\":{\"labels\":{\"app.oam.dev/component\":\"myweb\",\"app.oam.dev/name\":\"app-import-pkg\",\"trait.oam.dev/resource\":\"ingress\",\"trait.oam.dev/type\":\"ingress-import\"},\"name\":\"myweb\"},\"spec\":{\"rules\":[{\"host\":\"abc.com\",\"http\":{\"paths\":[{\"backend\":{\"serviceName\":\"myweb\",\"servicePort\":80},\"path\":\"/\"}]}}]}}"))

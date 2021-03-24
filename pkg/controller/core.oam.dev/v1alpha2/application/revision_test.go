@@ -343,7 +343,7 @@ var _ = Describe("test generate revision ", func() {
 
 	It("Test App with rollout template", func() {
 		By("Apply the application")
-		appParser := appfile.NewApplicationParser(reconciler.Client, reconciler.dm)
+		appParser := appfile.NewApplicationParser(reconciler.Client, reconciler.dm, reconciler.pd)
 		ctx = util.SetNamespaceInCtx(ctx, app.Namespace)
 		// mark the app as rollout
 		app.SetAnnotations(map[string]string{oam.AnnotationAppRollout: strconv.FormatBool(true)})

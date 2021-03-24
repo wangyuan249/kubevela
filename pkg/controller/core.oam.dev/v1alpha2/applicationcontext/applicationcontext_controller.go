@@ -10,11 +10,11 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha2"
 	core "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
@@ -80,8 +80,10 @@ func (r *Reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 	appConfig.Status = appContext.Status
 	// the name of the appConfig has to be the same as the appContext
-	appConfig.ObjectMeta = metav1.ObjectMeta{Namespace: appContext.Namespace,
-		Name: appContext.Name, UID: appContext.UID}
+	appConfig.Name = appContext.Name
+	appConfig.UID = appContext.UID
+	appConfig.SetLabels(appContext.GetLabels())
+	appConfig.SetAnnotations(appContext.GetAnnotations())
 	// makes sure that the appConfig's owner is the same as the appContext
 	appConfig.SetOwnerReferences(appContext.GetOwnerReferences())
 	// call into the old ac Reconciler and copy the status back
@@ -93,17 +95,20 @@ func (r *Reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	// use the controller build-in backoff mechanism if an error occurs
 	if err != nil {
 		reconResult.RequeueAfter = 0
+	} else if appContext.Status.RollingStatus == v1alpha2.RollingTemplated {
+		// makes sure that we can will reconcile shortly after the annotation is removed
+		reconResult.RequeueAfter = time.Second * 5
 	}
 	return reconResult, err
 }
 
 // SetupWithManager setup the controller with manager
-func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager, compHandler *ac.ComponentHandler) error {
 	r.record = event.NewAPIRecorder(mgr.GetEventRecorderFor("AppRollout")).
 		WithAnnotations("controller", "AppRollout")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha2.ApplicationContext{}).
-		Owns(&v1alpha2.Application{}).
+		Watches(&source.Kind{Type: &v1alpha2.Component{}}, compHandler).
 		Complete(r)
 }
 
@@ -118,5 +123,11 @@ func Setup(mgr ctrl.Manager, args core.Args, l logging.Logger) error {
 		record:    record,
 		applyMode: args.ApplyMode,
 	}
-	return reconciler.SetupWithManager(mgr)
+	compHandler := &ac.ComponentHandler{
+		Client:                mgr.GetClient(),
+		Logger:                l,
+		RevisionLimit:         args.RevisionLimit,
+		CustomRevisionHookURL: args.CustomRevisionHookURL,
+	}
+	return reconciler.SetupWithManager(mgr, compHandler)
 }

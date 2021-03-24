@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/pointer"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha2"
 	"github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1alpha2/applicationconfiguration"
@@ -36,18 +37,23 @@ func (r *Reconciler) getTargetApps(ctx context.Context, targetAppRevisionName st
 	if err := r.Get(ctx, ktypes.NamespacedName{Namespace: namespaceName, Name: targetAppRevisionName},
 		&appContext); err != nil {
 		if apierrors.IsNotFound(err) {
-			klog.ErrorS(err, "target application context does not exist, create one", "target application revision",
+			klog.InfoS("target application context does not exist, create one", "target application revision",
 				klog.KRef(namespaceName, targetAppRevisionName))
 			appContext, err = r.createAppContext(ctx, &appRevision)
 			if err != nil {
 				return nil, nil, err
 			}
+		} else {
+			klog.ErrorS(err, "cannot locate target application context", "target application revision",
+				klog.KRef(namespaceName, targetAppRevisionName))
+			return nil, nil, err
 		}
-		klog.ErrorS(err, "cannot locate target application revision", "target application revision",
-			klog.KRef(namespaceName, targetAppRevisionName))
+	}
+	// set the AC as rolling
+	err := r.prepareAppContextForRollout(ctx, &appContext)
+	if err != nil {
 		return nil, nil, err
 	}
-
 	return &appRevision, &appContext, nil
 }
 
@@ -72,12 +78,17 @@ func (r *Reconciler) getSourceAppContexts(ctx context.Context, sourceAppRevision
 		return nil, nil, err
 	}
 	// set the AC as rolling
-	oamutil.AddAnnotations(&appContext, map[string]string{oam.AnnotationAppRollout: strconv.FormatBool(true)})
-	err := r.Update(ctx, &appContext)
+	err := r.prepareAppContextForRollout(ctx, &appContext)
 	if err != nil {
 		return nil, nil, err
 	}
 	return &appRevision, &appContext, nil
+}
+
+func (r *Reconciler) prepareAppContextForRollout(ctx context.Context, appContext *v1alpha2.ApplicationContext) error {
+	oamutil.AddAnnotations(appContext, map[string]string{oam.AnnotationAppRollout: strconv.FormatBool(true)})
+	oamutil.RemoveAnnotations(appContext, []string{oam.AnnotationAppRevision})
+	return r.Update(ctx, appContext)
 }
 
 func (r *Reconciler) createAppContext(ctx context.Context, appRevision *v1alpha2.ApplicationRevision) (v1alpha2.
@@ -94,6 +105,13 @@ func (r *Reconciler) createAppContext(ctx context.Context, appRevision *v1alpha2
 		Spec: v1alpha2.ApplicationContextSpec{
 			ApplicationRevisionName: appRevision.GetName(),
 		},
+	}
+	if metav1.GetControllerOf(&appContext) == nil {
+		for i, owner := range appContext.GetOwnerReferences() {
+			if owner.Kind == v1alpha2.ApplicationKind {
+				appContext.GetOwnerReferences()[i].Controller = pointer.BoolPtr(true)
+			}
+		}
 	}
 	// set the AC as rolling
 	oamutil.AddAnnotations(&appContext, map[string]string{oam.AnnotationAppRollout: strconv.FormatBool(true)})
