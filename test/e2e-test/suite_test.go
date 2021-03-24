@@ -97,20 +97,6 @@ var _ = BeforeSuite(func(done Done) {
 		logf.Log.Error(err, "failed to create k8sClient")
 		Fail("setup failed")
 	}
-
-	// TODO: Remove this after we get rid of the integration test dir
-	By("Applying CRD of ComponentDefinition, WorkloadDefinition and TraitDefinition")
-	var componentDefinitionCRD crdv1.CustomResourceDefinition
-	Expect(common.ReadYamlToObject("../../charts/vela-core/crds/core.oam.dev_componentdefinitions.yaml", &componentDefinitionCRD)).Should(BeNil())
-	Expect(k8sClient.Create(context.Background(), &componentDefinitionCRD)).Should(SatisfyAny(BeNil(), &util.AlreadyExistMatcher{}))
-
-	var workloadDefinitionCRD crdv1.CustomResourceDefinition
-	Expect(common.ReadYamlToObject("../../charts/vela-core/crds/core.oam.dev_workloaddefinitions.yaml", &workloadDefinitionCRD)).Should(BeNil())
-	Expect(k8sClient.Create(context.Background(), &workloadDefinitionCRD)).Should(SatisfyAny(BeNil(), &util.AlreadyExistMatcher{}))
-
-	var traitDefinitionCRD crdv1.CustomResourceDefinition
-	Expect(common.ReadYamlToObject("../../charts/vela-core/crds/core.oam.dev_traitdefinitions.yaml", &traitDefinitionCRD)).Should(BeNil())
-	Expect(k8sClient.Create(context.Background(), &traitDefinitionCRD)).Should(SatisfyAny(BeNil(), &util.AlreadyExistMatcher{}))
 	By("Finished setting up test environment")
 
 	// Create manual scaler trait definition
@@ -304,27 +290,6 @@ var _ = AfterSuite(func() {
 		},
 	}
 	Expect(k8sClient.Delete(context.Background(), &crd)).Should(BeNil())
-	By("Deleted the custom resource definition")
-
-	// TODO: Remove this after we get rid of the integration test dir
-	// Below is a CI hack so that the integration test can run. We need to migrate the integration test
-	// to this e2e dir and suite (https://github.com/oam-dev/kubevela/issues/1147)
-	By("Deleting all the definitions by deleting the definition CRDs")
-	crd = crdv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "workloaddefinitions.core.oam.dev",
-		},
-	}
-	Expect(k8sClient.Delete(context.Background(), &crd)).Should(SatisfyAny(BeNil(), &util.NotFoundMatcher{}))
-	By("Deleted the workloaddefinitions CRD")
-
-	crd = crdv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "traitdefinitions.core.oam.dev",
-		},
-	}
-	Expect(k8sClient.Delete(context.Background(), &crd)).Should(SatisfyAny(BeNil(), &util.NotFoundMatcher{}))
-	By("Deleted the workloaddefinitions CRD")
 })
 
 // reconcileAppConfigNow will trigger an immediate reconciliation on AppConfig.
