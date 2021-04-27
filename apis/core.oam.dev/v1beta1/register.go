@@ -61,6 +61,14 @@ var (
 	TraitDefinitionGroupVersionKind = SchemeGroupVersion.WithKind(TraitDefinitionKind)
 )
 
+// DefinitionRevision type metadata.
+var (
+	DefinitionRevisionKind             = reflect.TypeOf(DefinitionRevision{}).Name()
+	DefinitionRevisionGroupKind        = schema.GroupKind{Group: Group, Kind: DefinitionRevisionKind}.String()
+	DefinitionRevisionKindAPIVersion   = DefinitionRevisionKind + "." + SchemeGroupVersion.String()
+	DefinitionRevisionGroupVersionKind = SchemeGroupVersion.WithKind(DefinitionRevisionKind)
+)
+
 // Application type metadata.
 var (
 	ApplicationKind            = reflect.TypeOf(Application{}).Name()
@@ -93,11 +101,40 @@ var (
 	ScopeDefinitionGroupVersionKind = SchemeGroupVersion.WithKind(ScopeDefinitionKind)
 )
 
+// ResourceTracker type metadata.
+var (
+	ResourceTrackerKind            = reflect.TypeOf(ResourceTracker{}).Name()
+	ResourceTrackerGroupKind       = schema.GroupKind{Group: Group, Kind: ResourceTrackerKind}.String()
+	ResourceTrackerKindAPIVersion  = ResourceTrackerKind + "." + SchemeGroupVersion.String()
+	ResourceTrackerKindVersionKind = SchemeGroupVersion.WithKind(ResourceTrackerKind)
+)
+
+// AppDeployment type metadata.
+var (
+	AppDeploymentKind            = reflect.TypeOf(AppDeployment{}).Name()
+	AppDeploymentGroupKind       = schema.GroupKind{Group: Group, Kind: AppDeploymentKind}.String()
+	AppDeploymentKindAPIVersion  = AppDeploymentKind + "." + SchemeGroupVersion.String()
+	AppDeploymentKindVersionKind = SchemeGroupVersion.WithKind(AppDeploymentKind)
+)
+
+// Cluster type metadata.
+var (
+	ClusterKind            = reflect.TypeOf(Cluster{}).Name()
+	ClusterGroupKind       = schema.GroupKind{Group: Group, Kind: ClusterKind}.String()
+	ClusterKindAPIVersion  = ApplicationKind + "." + SchemeGroupVersion.String()
+	ClusterKindVersionKind = SchemeGroupVersion.WithKind(ClusterKind)
+)
+
 func init() {
 	SchemeBuilder.Register(&ComponentDefinition{}, &ComponentDefinitionList{})
 	SchemeBuilder.Register(&WorkloadDefinition{}, &WorkloadDefinitionList{})
 	SchemeBuilder.Register(&TraitDefinition{}, &TraitDefinitionList{})
+	SchemeBuilder.Register(&DefinitionRevision{}, &DefinitionRevisionList{})
+	SchemeBuilder.Register(&ScopeDefinition{}, &ScopeDefinitionList{})
 	SchemeBuilder.Register(&Application{}, &ApplicationList{})
 	SchemeBuilder.Register(&AppRollout{}, &AppRolloutList{})
 	SchemeBuilder.Register(&ApplicationRevision{}, &ApplicationRevisionList{})
+	SchemeBuilder.Register(&AppDeployment{}, &AppDeploymentList{})
+	SchemeBuilder.Register(&Cluster{}, &ClusterList{})
+	SchemeBuilder.Register(&ResourceTracker{}, &ResourceTrackerList{})
 }

@@ -5,11 +5,12 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.2.4
-  creationTimestamp: null
   name: rollouttraits.standard.oam.dev
 spec:
   group: standard.oam.dev
   names:
+    categories:
+    - oam
     kind: RolloutTrait
     listKind: RolloutTraitList
     plural: rollouttraits
@@ -341,8 +342,12 @@ spec:
             rollingState:
               description: RollingState is the Rollout State
               type: string
+            rolloutOriginalSize:
+              description: RolloutTargetSize is the size of the target resources. This is determined once the initial spec verification and does not change until the rollout is restarted
+              format: int32
+              type: integer
             rolloutTargetSize:
-              description: RolloutTargetTotalSize is the size of the target resources. This is determined once the initial spec verification and does not change until the rollout is restarted
+              description: RolloutTargetSize is the size of the target resources. This is determined once the initial spec verification and does not change until the rollout is restarted
               format: int32
               type: integer
             targetGeneration:

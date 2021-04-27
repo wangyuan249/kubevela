@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package e2e
 
 import (
@@ -34,7 +50,6 @@ var _ = ginkgo.Describe("Test Vela Application", func() {
 	e2e.JsonAppFileContext("deploy app-basic", appbasicJsonAppFile)
 	e2e.JsonAppFileContext("update app-basic, add scaler trait with replicas 2", appbasicAddTraitJsonAppFile)
 	e2e.ComponentListContext("ls", applicationName, workloadType, traitAlias)
-	ApplicationShowContext("show", applicationName, workloadType)
 	ApplicationStatusContext("status", applicationName, workloadType)
 	ApplicationStatusDeeplyContext("status", applicationName, workloadType, envName)
 	ApplicationExecContext("exec -- COMMAND", applicationName)
@@ -85,19 +100,6 @@ var ApplicationStatusDeeplyContext = func(context string, applicationName, workl
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(output).To(gomega.ContainSubstring("Checking health status"))
 			// TODO(zzxwill) need to check workloadType after app status is refined
-		})
-	})
-}
-
-var ApplicationShowContext = func(context string, applicationName string, workloadType string) bool {
-	return ginkgo.Context(context, func() {
-		ginkgo.It("should show app information", func() {
-			cli := fmt.Sprintf("vela show %s", applicationName)
-			output, err := e2e.Exec(cli)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			// TODO(zzxwill) need to check workloadType after app show is refined
-			//gomega.Expect(output).To(gomega.ContainSubstring(workloadType))
-			gomega.Expect(output).To(gomega.ContainSubstring(applicationName))
 		})
 	})
 }
@@ -153,6 +155,10 @@ var ApplicationInitIntercativeCliContext = func(context string, appName string, 
 					{
 						q: "What would you like to name this webservice (required): ",
 						a: "mysvc",
+					},
+					{
+						q: "what would you configure for parameter 'addRevisionLabel' (optional, default is false):",
+						a: "N",
 					},
 					{
 						q: "Which image would you like to use for your service ",

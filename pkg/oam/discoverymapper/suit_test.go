@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package discoverymapper
 
 import (
@@ -147,11 +163,10 @@ var _ = Describe("Mapper discovery resources", func() {
 		}))
 
 		var kinds []schema.GroupVersionKind
-		Eventually(func() error {
-			kinds, err = dism.KindsFor(schema.GroupVersionResource{Group: "example.com", Version: "", Resource: "foos"})
-			return err
-		}, time.Second*10, time.Millisecond*300).Should(BeNil())
-		Expect(kinds).Should(Equal([]schema.GroupVersionKind{
+		Eventually(func() []schema.GroupVersionKind {
+			kinds, _ = dism.KindsFor(schema.GroupVersionResource{Group: "example.com", Version: "", Resource: "foos"})
+			return kinds
+		}, time.Second*30, time.Millisecond*300).Should(Equal([]schema.GroupVersionKind{
 			{Group: "example.com", Version: "v1", Kind: "Foo"},
 			{Group: "example.com", Version: "v1beta1", Kind: "Foo"},
 		}))

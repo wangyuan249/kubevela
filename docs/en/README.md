@@ -1,10 +1,10 @@
-![alt](../resources/KubeVela-03.png)
+![alt](resources/KubeVela-03.png)
 
 *Make shipping applications more enjoyable.*
 
 # KubeVela
 
-KubeVela is the platform engine to create *PaaS-like* experience on Kubernetes, in a scalable approach.
+KubeVela is a modern application platform that is fully self-service, and adapts to your needs when you grow.
 
 ## Community
 
@@ -14,11 +14,11 @@ KubeVela is the platform engine to create *PaaS-like* experience on Kubernetes, 
 
 ## Installation
 
-Installation guide is available on [this section](./install.md).
+Installation guide is available on [this section](./install).
 
 ## Quick Start
 
-Quick start is available on [this section](./quick-start.md).
+Quick start is available on [this section](./quick-start).
 
 ## Contributing
 Check out [CONTRIBUTING](https://github.com/oam-dev/kubevela/blob/master/CONTRIBUTING.md) to see how to develop with KubeVela.

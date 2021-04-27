@@ -44,7 +44,7 @@ type ApplicationRevisionSpec struct {
 
 	// Components records the rendered components from Application, it will contains the whole K8s CR of workload in it.
 
-	Components map[string]common.RawComponent `json:"components,omitempty"`
+	Components []common.RawComponent `json:"components,omitempty"`
 
 	// ApplicationConfiguration records the rendered applicationConfiguration from Application,
 	// it will contains the whole K8s CR of trait and the reference component in it.
@@ -55,7 +55,8 @@ type ApplicationRevisionSpec struct {
 
 // ApplicationRevision is the Schema for the ApplicationRevision API
 // +kubebuilder:object:root=true
-// +kubebuilder:shortName=apprev,resource:categories={oam}
+// +kubebuilder:resource:categories={oam},shortName=apprev
+// +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=".metadata.creationTimestamp"
 type ApplicationRevision struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

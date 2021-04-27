@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The KubeVela Authors.
+Copyright 2021 The KubeVela Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -41,9 +41,20 @@ const (
 
 // Args args used by controller
 type Args struct {
+	// ApplicationConfigurationInstalled indicates if we have installed the ApplicationConfiguration CRD
+	ApplicationConfigurationInstalled bool
+
 	// RevisionLimit is the maximum number of revisions that will be maintained.
 	// The default value is 50.
 	RevisionLimit int
+
+	// AppRevisionLimit is the maximum number of application revisions that will be maintained.
+	// The default value is 10.
+	AppRevisionLimit int
+
+	// DefRevisionLimit is the maximum number of component/trait definition revisions that will be maintained.
+	// The default value is 20.
+	DefRevisionLimit int
 
 	// ApplyMode indicates whether workloads and traits should be
 	// affected if no spec change is made in the ApplicationConfiguration.

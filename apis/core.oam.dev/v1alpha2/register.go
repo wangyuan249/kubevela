@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The KubeVela Authors.
+Copyright 2021 The KubeVela Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,8 +21,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/scheme"
-
-	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
 
 // Package type metadata.
@@ -143,14 +141,6 @@ var (
 	ApplicationRevisionGroupVersionKind = SchemeGroupVersion.WithKind(ApplicationRevisionKind)
 )
 
-// AppDeployment type metadata.
-var (
-	AppDeploymentKind            = reflect.TypeOf(v1beta1.AppDeployment{}).Name()
-	AppDeploymentGroupKind       = schema.GroupKind{Group: Group, Kind: AppDeploymentKind}.String()
-	AppDeploymentKindAPIVersion  = ApplicationKind + "." + SchemeGroupVersion.String()
-	AppDeploymentKindVersionKind = SchemeGroupVersion.WithKind(AppDeploymentKind)
-)
-
 func init() {
 	SchemeBuilder.Register(&ComponentDefinition{}, &ComponentDefinitionList{})
 	SchemeBuilder.Register(&WorkloadDefinition{}, &WorkloadDefinitionList{})
@@ -165,6 +155,4 @@ func init() {
 	SchemeBuilder.Register(&AppRollout{}, &AppRolloutList{})
 	SchemeBuilder.Register(&ApplicationRevision{}, &ApplicationRevisionList{})
 	SchemeBuilder.Register(&ApplicationContext{}, &ApplicationContextList{})
-	SchemeBuilder.Register(&v1beta1.AppDeployment{}, &v1beta1.AppDeploymentList{})
-	SchemeBuilder.Register(&Cluster{}, &ClusterList{})
 }

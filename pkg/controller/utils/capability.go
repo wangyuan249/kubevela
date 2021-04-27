@@ -24,7 +24,9 @@ import (
 	"strings"
 
 	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/build"
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,41 +35,41 @@ import (
 
 	commontypes "github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha2"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
+	"github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/appfile/helm"
 	mycue "github.com/oam-dev/kubevela/pkg/cue"
+	"github.com/oam-dev/kubevela/pkg/dsl/definition"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
 )
 
-const (
-	// UsageTag is usage comment annotation
-	UsageTag = "+usage="
-	// ShortTag is the short alias annotation
-	ShortTag = "+short"
-)
+// ErrNoSectionParameterInCue means there is not parameter section in Cue template of a workload
+const ErrNoSectionParameterInCue = "capability %s doesn't contain section `parameter`"
 
 // CapabilityDefinitionInterface is the interface for Capability (WorkloadDefinition and TraitDefinition)
 type CapabilityDefinitionInterface interface {
-	GetCapabilityObject(ctx context.Context, k8sClient client.Client, namespace, name string) (types.Capability, error)
-	GetOpenAPISchema(ctx context.Context, k8sClient client.Client, objectKey client.ObjectKey) ([]byte, error)
+	GetCapabilityObject(ctx context.Context, k8sClient client.Client, namespace, name string) (*types.Capability, error)
+	GetOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name string) ([]byte, error)
 }
 
 // CapabilityComponentDefinition is the struct for ComponentDefinition
 type CapabilityComponentDefinition struct {
-	Name                string                       `json:"name"`
-	ComponentDefinition v1alpha2.ComponentDefinition `json:"componentDefinition"`
+	Name                string                      `json:"name"`
+	ComponentDefinition v1beta1.ComponentDefinition `json:"componentDefinition"`
 
 	WorkloadType    util.WorkloadType `json:"workloadType"`
 	WorkloadDefName string            `json:"workloadDefName"`
 
 	Helm *commontypes.Helm `json:"helm"`
+	Kube *commontypes.Kube `json:"kube"`
 	CapabilityBaseDefinition
 }
 
 // GetCapabilityObject gets types.Capability object by WorkloadDefinition name
 func (def *CapabilityComponentDefinition) GetCapabilityObject(ctx context.Context, k8sClient client.Client, namespace, name string) (*types.Capability, error) {
-	var componentDefinition v1alpha2.ComponentDefinition
+	var componentDefinition v1beta1.ComponentDefinition
 	var capability types.Capability
 	objectKey := client.ObjectKey{
 		Namespace: namespace,
@@ -86,9 +88,9 @@ func (def *CapabilityComponentDefinition) GetCapabilityObject(ctx context.Contex
 		if err := k8sClient.Get(ctx, objectKey, wd); err != nil {
 			return nil, fmt.Errorf("failed to get WorkloadDefinition that ComponentDefinition refers to")
 		}
-		capability, err = util.ConvertTemplateJSON2Object(name, wd.Spec.Extension, wd.Spec.Schematic)
+		capability, err = appfile.ConvertTemplateJSON2Object(name, wd.Spec.Extension, wd.Spec.Schematic)
 	default:
-		capability, err = util.ConvertTemplateJSON2Object(name, componentDefinition.Spec.Extension, componentDefinition.Spec.Schematic)
+		capability, err = appfile.ConvertTemplateJSON2Object(name, componentDefinition.Spec.Extension, componentDefinition.Spec.Schematic)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert ComponentDefinition to Capability Object")
 		}
@@ -97,23 +99,63 @@ func (def *CapabilityComponentDefinition) GetCapabilityObject(ctx context.Contex
 }
 
 // GetOpenAPISchema gets OpenAPI v3 schema by WorkloadDefinition name
-func (def *CapabilityComponentDefinition) GetOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name string) ([]byte, error) {
+func (def *CapabilityComponentDefinition) GetOpenAPISchema(ctx context.Context, k8sClient client.Client, pd *definition.PackageDiscover, namespace, name string) ([]byte, error) {
 	capability, err := def.GetCapabilityObject(ctx, k8sClient, namespace, name)
 	if err != nil {
 		return nil, err
 	}
-	return getOpenAPISchema(*capability)
+	return getOpenAPISchema(*capability, pd)
+}
+
+// GetKubeSchematicOpenAPISchema gets OpenAPI v3 schema based on kube schematic parameters
+func (def *CapabilityComponentDefinition) GetKubeSchematicOpenAPISchema(params []commontypes.KubeParameter) ([]byte, error) {
+	required := []string{}
+	properties := map[string]*openapi3.Schema{}
+	for _, p := range params {
+		var tmp *openapi3.Schema
+		switch p.ValueType {
+		case commontypes.StringType:
+			tmp = openapi3.NewStringSchema()
+		case commontypes.NumberType:
+			tmp = openapi3.NewFloat64Schema()
+		case commontypes.BooleanType:
+			tmp = openapi3.NewBoolSchema()
+		default:
+			tmp = openapi3.NewStringSchema()
+		}
+		if p.Required != nil && *p.Required {
+			required = append(required, p.Name)
+		}
+		// save FieldPaths into description
+		tmp.Description = fmt.Sprintf("The value will be applied to fields: [%s].", strings.Join(p.FieldPaths, ","))
+		if p.Description != nil {
+			tmp.Description = fmt.Sprintf("%s\n %s", tmp.Description, *p.Description)
+		}
+		properties[p.Name] = tmp
+	}
+	s := openapi3.NewObjectSchema().WithProperties(properties)
+	if len(required) > 0 {
+		s.Required = required
+	}
+	b, err := s.MarshalJSON()
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot marshal generated schema into json")
+	}
+	return b, nil
 }
 
 // StoreOpenAPISchema stores OpenAPI v3 schema in ConfigMap from WorkloadDefinition
-func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name string) error {
+func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client,
+	pd *definition.PackageDiscover, namespace, name, revName string) error {
 	var jsonSchema []byte
 	var err error
 	switch def.WorkloadType {
 	case util.HELMDef:
 		jsonSchema, err = helm.GetChartValuesJSONSchema(ctx, def.Helm)
+	case util.KubeDef:
+		jsonSchema, err = def.GetKubeSchematicOpenAPISchema(def.Kube.Parameters)
 	default:
-		jsonSchema, err = def.GetOpenAPISchema(ctx, k8sClient, namespace, name)
+		jsonSchema, err = def.GetOpenAPISchema(ctx, k8sClient, pd, namespace, name)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to generate OpenAPI v3 JSON schema for capability %s: %w", def.Name, err)
@@ -132,19 +174,24 @@ func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context
 		return err
 	}
 	def.ComponentDefinition.Status.ConfigMapRef = cmName
+
+	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, jsonSchema, ownerReference)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 // CapabilityTraitDefinition is the Capability struct for TraitDefinition
 type CapabilityTraitDefinition struct {
-	Name            string                   `json:"name"`
-	TraitDefinition v1alpha2.TraitDefinition `json:"traitDefinition"`
+	Name            string                  `json:"name"`
+	TraitDefinition v1beta1.TraitDefinition `json:"traitDefinition"`
 	CapabilityBaseDefinition
 }
 
 // GetCapabilityObject gets types.Capability object by TraitDefinition name
 func (def *CapabilityTraitDefinition) GetCapabilityObject(ctx context.Context, k8sClient client.Client, namespace, name string) (*types.Capability, error) {
-	var traitDefinition v1alpha2.TraitDefinition
+	var traitDefinition v1beta1.TraitDefinition
 	var capability types.Capability
 	capability.Name = def.Name
 	objectKey := client.ObjectKey{
@@ -156,7 +203,7 @@ func (def *CapabilityTraitDefinition) GetCapabilityObject(ctx context.Context, k
 		return &capability, fmt.Errorf("failed to get WorkloadDefinition %s: %w", def.Name, err)
 	}
 	def.TraitDefinition = traitDefinition
-	capability, err = util.ConvertTemplateJSON2Object(name, traitDefinition.Spec.Extension, traitDefinition.Spec.Schematic)
+	capability, err = appfile.ConvertTemplateJSON2Object(name, traitDefinition.Spec.Extension, traitDefinition.Spec.Schematic)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert WorkloadDefinition to Capability Object")
 	}
@@ -164,17 +211,17 @@ func (def *CapabilityTraitDefinition) GetCapabilityObject(ctx context.Context, k
 }
 
 // GetOpenAPISchema gets OpenAPI v3 schema by TraitDefinition name
-func (def *CapabilityTraitDefinition) GetOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name string) ([]byte, error) {
+func (def *CapabilityTraitDefinition) GetOpenAPISchema(ctx context.Context, k8sClient client.Client, pd *definition.PackageDiscover, namespace, name string) ([]byte, error) {
 	capability, err := def.GetCapabilityObject(ctx, k8sClient, namespace, name)
 	if err != nil {
 		return nil, err
 	}
-	return getOpenAPISchema(*capability)
+	return getOpenAPISchema(*capability, pd)
 }
 
 // StoreOpenAPISchema stores OpenAPI v3 schema from TraitDefinition in ConfigMap
-func (def *CapabilityTraitDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name string) error {
-	jsonSchema, err := def.GetOpenAPISchema(ctx, k8sClient, namespace, name)
+func (def *CapabilityTraitDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client, pd *definition.PackageDiscover, namespace, name string) error {
+	jsonSchema, err := def.GetOpenAPISchema(ctx, k8sClient, pd, namespace, name)
 	if err != nil {
 		return fmt.Errorf(util.ErrGenerateOpenAPIV2JSONSchemaForCapability, def.Name, err)
 	}
@@ -208,7 +255,7 @@ func (def *CapabilityBaseDefinition) CreateOrUpdateConfigMap(ctx context.Context
 		types.OpenapiV3JSONSchema: string(jsonSchema),
 	}
 	// No need to check the existence of namespace, if it doesn't exist, API server will return the error message
-	// before it's to be reconciled by WorkloadDefinition/TraitDefinition controller.
+	// before it's to be reconciled by ComponentDefinition/TraitDefinition controller.
 	err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cmName}, &cm)
 	if err != nil && apierrors.IsNotFound(err) {
 		cm = v1.ConfigMap{
@@ -241,20 +288,15 @@ func (def *CapabilityBaseDefinition) CreateOrUpdateConfigMap(ctx context.Context
 }
 
 // getDefinition is the main function for GetDefinition API
-func getOpenAPISchema(capability types.Capability) ([]byte, error) {
-	openAPISchema, err := generateOpenAPISchemaFromCapabilityParameter(capability)
+func getOpenAPISchema(capability types.Capability, pd *definition.PackageDiscover) ([]byte, error) {
+	openAPISchema, err := generateOpenAPISchemaFromCapabilityParameter(capability, pd)
 	if err != nil {
 		return nil, err
 	}
-	swagger, err := openapi3.NewSwaggerLoader().LoadSwaggerFromData(openAPISchema)
+	schema, err := ConvertOpenAPISchema2SwaggerObject(openAPISchema)
 	if err != nil {
 		return nil, err
 	}
-	schemaRef := swagger.Components.Schemas["parameter"]
-	if schemaRef == nil {
-		return nil, fmt.Errorf(util.ErrGenerateOpenAPIV2JSONSchemaForCapability, capability.Name, nil)
-	}
-	schema := schemaRef.Value
 	fixOpenAPISchema("", schema)
 
 	parameter, err := schema.MarshalJSON()
@@ -265,22 +307,41 @@ func getOpenAPISchema(capability types.Capability) ([]byte, error) {
 }
 
 // generateOpenAPISchemaFromCapabilityParameter returns the parameter of a definition in cue.Value format
-func generateOpenAPISchemaFromCapabilityParameter(capability types.Capability) ([]byte, error) {
-	name := capability.Name
-	template, err := prepareParameterCue(name, capability.CueTemplate)
+func generateOpenAPISchemaFromCapabilityParameter(capability types.Capability, pd *definition.PackageDiscover) ([]byte, error) {
+	template, err := prepareParameterCue(capability.Name, capability.CueTemplate)
 	if err != nil {
 		return nil, err
 	}
 
-	// append context section in CUE string
 	template += mycue.BaseTemplate
+	if pd == nil {
+		var r cue.Runtime
+		cueInst, err := r.Compile("-", template)
+		if err != nil {
+			return nil, err
+		}
+		return common.GenOpenAPI(cueInst)
+	}
+	bi := build.NewContext().NewInstance("", nil)
+	err = bi.AddFile("-", template)
+	if err != nil {
+		return nil, err
+	}
 
-	var r cue.Runtime
-	cueInst, err := r.Compile("-", template)
+	cueInst, err := pd.ImportPackagesAndBuildInstance(bi)
 	if err != nil {
 		return nil, err
 	}
 	return common.GenOpenAPI(cueInst)
+}
+
+// GenerateOpenAPISchemaFromDefinition returns the parameter of a definition
+func GenerateOpenAPISchemaFromDefinition(definitionName, cueTemplate string) ([]byte, error) {
+	capability := types.Capability{
+		Name:        definitionName,
+		CueTemplate: cueTemplate,
+	}
+	return generateOpenAPISchemaFromCapabilityParameter(capability, nil)
 }
 
 // prepareParameterCue cuts `parameter` section form definition .cue file
@@ -299,7 +360,7 @@ func prepareParameterCue(capabilityName, capabilityTemplate string) (string, err
 	}
 
 	if !withParameterFlag {
-		return "", fmt.Errorf("capability %s doesn't contain section `parmeter`", capabilityName)
+		return "", fmt.Errorf(ErrNoSectionParameterInCue, capabilityName)
 	}
 	return template, nil
 }
@@ -321,12 +382,26 @@ func fixOpenAPISchema(name string, schema *openapi3.Schema) {
 	}
 
 	description := schema.Description
-	if strings.Contains(description, UsageTag) {
-		description = strings.Split(description, UsageTag)[1]
+	if strings.Contains(description, appfile.UsageTag) {
+		description = strings.Split(description, appfile.UsageTag)[1]
 	}
-	if strings.Contains(description, ShortTag) {
-		description = strings.Split(description, ShortTag)[0]
+	if strings.Contains(description, appfile.ShortTag) {
+		description = strings.Split(description, appfile.ShortTag)[0]
 		description = strings.TrimSpace(description)
 	}
 	schema.Description = description
+}
+
+// ConvertOpenAPISchema2SwaggerObject converts OpenAPI v2 JSON schema to Swagger Object
+func ConvertOpenAPISchema2SwaggerObject(data []byte) (*openapi3.Schema, error) {
+	swagger, err := openapi3.NewSwaggerLoader().LoadSwaggerFromData(data)
+	if err != nil {
+		return nil, err
+	}
+
+	schemaRef, ok := swagger.Components.Schemas[mycue.ParameterTag]
+	if !ok {
+		return nil, errors.New(util.ErrGenerateOpenAPIV2JSONSchemaForCapability)
+	}
+	return schemaRef.Value, nil
 }

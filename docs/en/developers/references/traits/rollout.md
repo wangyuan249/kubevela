@@ -1,4 +1,6 @@
-# Rollout
+---
+title:  Rollout
+---
 
 ## Description
 
@@ -9,10 +11,7 @@ Configures Canary deployment strategy for your application.
 List of all configuration options for a `Rollout` trait.
 
 ```yaml
-servcies:
-  express-server:
-    ...
-
+...
     rollout:
       replicas: 2
       stepWeight: 50

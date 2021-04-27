@@ -62,13 +62,18 @@ type ComponentDefinitionStatus struct {
 	runtimev1alpha1.ConditionedStatus `json:",inline"`
 	// ConfigMapRef refer to a ConfigMap which contains OpenAPI V3 JSON schema of Component parameters.
 	ConfigMapRef string `json:"configMapRef,omitempty"`
+	// LatestRevision of the component definition
+	// +optional
+	LatestRevision *common.Revision `json:"latestRevision,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
 // ComponentDefinition is the Schema for the componentdefinitions API
-// +kubebuilder:resource:scope=Namespaced,categories={oam}
+// +kubebuilder:resource:scope=Namespaced,categories={oam},shortName=comp
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="WORKLOAD-KIND",type=string,JSONPath=".spec.workload.definition.kind"
+// +kubebuilder:printcolumn:name="DESCRIPTION",type=string,JSONPath=".metadata.annotations.definition\\.oam\\.dev/description"
 type ComponentDefinition struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

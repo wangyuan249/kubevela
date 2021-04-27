@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package definition
 
 import (
@@ -8,6 +24,7 @@ import (
 	"cuelang.org/go/cue/build"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
+	"github.com/google/go-cmp/cmp"
 	"gotest.tools/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -21,7 +38,7 @@ func TestPackage(t *testing.T) {
 		"paths...": {
 			"post":{
 				"x-kubernetes-group-version-kind": {
-                    "group": "test.io",
+                    "group": "apps.test.io",
                     "kind": "Bucket",
                     "version": "v1"
                 }
@@ -29,7 +46,7 @@ func TestPackage(t *testing.T) {
 		}
 	},
     "definitions":{
-        "Bucket":{
+        "io.test.apps.v1.Bucket":{
             "properties":{
 				"apiVersion": {"type": "string"}
  				"kind": {"type": "string"}
@@ -314,79 +331,101 @@ func TestPackage(t *testing.T) {
     }
 }
 `
-	mypd := &PackageDiscover{pkgKinds: make(map[string][]string)}
+	mypd := &PackageDiscover{pkgKinds: make(map[string][]VersionKind)}
 	mypd.addKubeCUEPackagesFromCluster(openAPISchema)
-	bi := build.NewContext().NewInstance("", nil)
-	mypd.ImportBuiltinPackagesFor(bi)
-	bi.AddFile("-", `
-import "kube/test.io/v1"
-output: v1.#Bucket
-`)
-	var r cue.Runtime
-	inst, err := r.Build(bi)
-	assert.NilError(t, err)
-	base, err := model.NewBase(inst.Value())
-	assert.NilError(t, err)
+	expectPkgKinds := map[string][]VersionKind{
+		"test.io/apps/v1": []VersionKind{{
+			DefinitionName: "#Bucket",
+			APIVersion:     "apps.test.io/v1",
+			Kind:           "Bucket",
+		}},
+		"kube/apps.test.io/v1": []VersionKind{{
+			DefinitionName: "#Bucket",
+			APIVersion:     "apps.test.io/v1",
+			Kind:           "Bucket",
+		}},
+	}
+	assert.Equal(t, cmp.Diff(mypd.ListPackageKinds(), expectPkgKinds), "")
 
 	exceptObj := `output: close({
 	kind:                "Bucket"
-	apiVersion:          "test.io/v1"
+	apiVersion:          "apps.test.io/v1"
 	type:                "alicloud_oss_bucket"
 	acl:                 "public-read-write" | "public-read" | *"private"
 	dataRedundancyType?: "ZRS" | *"LRS"
-	dataSourceRef?:      close({
+	dataSourceRef?: {
 		dsPath: string
-	})
-	importRef?: close({
+	}
+	importRef?: {
 		importKey: string
-	})
-	output: close({
+	}
+	output: {
 		{[!~"^(bucketName|extranetEndpoint|intranetEndpoint|masterUserId)$"]: {
 											outRef: string
 		} | {
 			// Example: demoVpc.vpcId
 			valueRef: string
 		}}
-		bucketName: close({
+		bucketName: {
 			outRef: "self.name"
-		})
-		extranetEndpoint: close({
+		}
+		extranetEndpoint: {
 			outRef: "self.state.extranetEndpoint"
-		})
-		intranetEndpoint: close({
+		}
+		intranetEndpoint: {
 			outRef: "self.state.intranetEndpoint"
-		})
-		masterUserId: close({
+		}
+		masterUserId: {
 			outRef: "self.state.masterUserId"
-		})
-	})
-	profile: close({
-		baasRepo: string | close({
+		}
+	}
+	profile: {
+		baasRepo: string | {
 			// Example: demoVpc.vpcId
 			valueRef: string
-		})
+		}
 		cloudProduct: "AliCloudOSS"
-		endpoint?:    string | close({
+		endpoint?:    string | {
 			// Example: demoVpc.vpcId
 			valueRef: string
-		})
-		envType?: "testing" | "product" | close({
+		}
+		envType?: "testing" | "product" | {
 			// Example: demoVpc.vpcId
 			valueRef: string
-		})
+		}
 		provider: "alicloud"
-		region:   string | close({
+		region:   string | {
 			// Example: demoVpc.vpcId
 			valueRef: string
-		})
-		serviceAccount?: string | close({
+		}
+		serviceAccount?: string | {
 			// Example: demoVpc.vpcId
 			valueRef: string
-		})
-	})
+		}
+	}
 	storageClass?: "IA" | "Archive" | "ColdArchive" | *"Standard"
 })
 `
+	bi := build.NewContext().NewInstance("", nil)
+	bi.AddFile("-", `
+import "test.io/apps/v1"
+output: v1.#Bucket
+`)
+	inst, err := mypd.ImportPackagesAndBuildInstance(bi)
+	assert.NilError(t, err)
+	base, err := model.NewBase(inst.Value())
+	assert.NilError(t, err)
+	assert.Equal(t, base.String(), exceptObj)
+
+	bi = build.NewContext().NewInstance("", nil)
+	bi.AddFile("-", `
+import "kube/apps.test.io/v1"
+output: v1.#Bucket
+`)
+	inst, err = mypd.ImportPackagesAndBuildInstance(bi)
+	assert.NilError(t, err)
+	base, err = model.NewBase(inst.Value())
+	assert.NilError(t, err)
 	assert.Equal(t, base.String(), exceptObj)
 }
 
@@ -428,20 +467,20 @@ func TestProcessFile(t *testing.T) {
 }
 
 func TestMount(t *testing.T) {
-	mypd := &PackageDiscover{pkgKinds: make(map[string][]string)}
+	mypd := &PackageDiscover{pkgKinds: make(map[string][]VersionKind)}
 	testPkg := newPackage("foo")
-	mypd.mount(testPkg, []string{"abc"})
+	mypd.mount(testPkg, []VersionKind{})
 	assert.Equal(t, len(mypd.velaBuiltinPackages), 1)
-	mypd.mount(testPkg, []string{"abc"})
+	mypd.mount(testPkg, []VersionKind{})
 	assert.Equal(t, len(mypd.velaBuiltinPackages), 1)
 	assert.Equal(t, mypd.velaBuiltinPackages[0], testPkg.Instance)
 }
 
-func TestGetGVK(t *testing.T) {
+func TestGetDGVK(t *testing.T) {
 	srcTmpl := `
 {
 	"x-kubernetes-group-version-kind": {
-		"group": "test.io",
+		"group": "apps.test.io",
 		"kind": "Foo",
 		"version": "v1"
 	}
@@ -450,12 +489,34 @@ func TestGetGVK(t *testing.T) {
 	var r cue.Runtime
 	inst, err := r.Compile("-", srcTmpl)
 	assert.NilError(t, err)
-	gvk, err := getGVK(inst.Value().Lookup("x-kubernetes-group-version-kind"))
+	gvk, err := getDGVK(inst.Value().Lookup("x-kubernetes-group-version-kind"))
 	assert.NilError(t, err)
-	assert.Equal(t, gvk, metav1.GroupVersionKind{
-		Group:   "test.io",
-		Version: "v1",
-		Kind:    "Foo",
+	assert.Equal(t, gvk, domainGroupVersionKind{
+		Domain:     "test.io",
+		Group:      "apps",
+		Version:    "v1",
+		Kind:       "Foo",
+		APIVersion: "apps.test.io/v1",
+	})
+
+	srcTmpl = `
+{
+	"x-kubernetes-group-version-kind": {
+		"group": "test.io",
+		"kind": "Foo",
+		"version": "v1"
+	}
+}
+`
+	inst, err = r.Compile("-", srcTmpl)
+	assert.NilError(t, err)
+	gvk, err = getDGVK(inst.Value().Lookup("x-kubernetes-group-version-kind"))
+	assert.NilError(t, err)
+	assert.Equal(t, gvk, domainGroupVersionKind{
+		Group:      "test.io",
+		Version:    "v1",
+		Kind:       "Foo",
+		APIVersion: "test.io/v1",
 	})
 }
 
@@ -469,7 +530,7 @@ func TestOpenAPIMapping(t *testing.T) {
 		{
 			input:  []string{"definitions", "io.k8s.api.discovery.v1beta1.Endpoint"},
 			pos:    token.NoPos,
-			result: "[#Endpoint]",
+			result: "[io_k8s_api_discovery_v1beta1_Endpoint]",
 		},
 		{
 			input:  []string{"definitions", "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSONSchemaProps"},
@@ -479,7 +540,7 @@ func TestOpenAPIMapping(t *testing.T) {
 		{
 			input:  []string{"definitions", "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSONSchemaProps"},
 			pos:    token.NoPos,
-			result: "[#JSONSchemaProps]",
+			result: "[io_k8s_apiextensions_apiserver_pkg_apis_apiextensions_v1_JSONSchemaProps]",
 		},
 		{
 			input:  []string{"definitions"},
@@ -488,8 +549,9 @@ func TestOpenAPIMapping(t *testing.T) {
 		},
 	}
 
+	emptyMapper := make(map[string]domainGroupVersionKind)
 	for _, tCase := range testCases {
-		labels, err := openAPIMapping(tCase.pos, tCase.input)
+		labels, err := openAPIMapping(emptyMapper)(tCase.pos, tCase.input)
 		if tCase.errMsg != "" {
 			assert.Error(t, err, tCase.errMsg)
 			continue
@@ -497,5 +559,72 @@ func TestOpenAPIMapping(t *testing.T) {
 		assert.NilError(t, err)
 		assert.Equal(t, len(labels), 1)
 		assert.Equal(t, tCase.result, fmt.Sprint(labels))
+	}
+}
+
+func TestGeneratePkgName(t *testing.T) {
+	testCases := []struct {
+		dgvk        domainGroupVersionKind
+		sdPkgName   string
+		openPkgName string
+	}{
+		{
+			dgvk: domainGroupVersionKind{
+				Domain:  "k8s.io",
+				Group:   "networking",
+				Version: "v1",
+				Kind:    "Ingress",
+			},
+			sdPkgName:   "k8s.io/networking/v1",
+			openPkgName: "kube/networking.k8s.io",
+		},
+		{
+			dgvk: domainGroupVersionKind{
+				Group:   "example.com",
+				Version: "v1",
+				Kind:    "Sls",
+			},
+			sdPkgName:   "example.com/v1",
+			openPkgName: "kube/example.com/v1",
+		},
+	}
+
+	for _, tCase := range testCases {
+		assert.Equal(t, genStandardPkgName(tCase.dgvk), tCase.sdPkgName)
+	}
+}
+
+func TestReverseString(t *testing.T) {
+	testCases := []struct {
+		gvr           metav1.GroupVersionKind
+		reverseString string
+	}{
+		{
+			gvr: metav1.GroupVersionKind{
+				Group:   "networking.k8s.io",
+				Version: "v1",
+				Kind:    "NetworkPolicy",
+			},
+			reverseString: "io_k8s_api_networking_v1_NetworkPolicy",
+		},
+		{
+			gvr: metav1.GroupVersionKind{
+				Group:   "example.com",
+				Version: "v1",
+				Kind:    "Sls",
+			},
+			reverseString: "com_example_v1_Sls",
+		},
+		{
+			gvr: metav1.GroupVersionKind{
+				Version: "v1",
+				Kind:    "Pod",
+			},
+			reverseString: "io_k8s_api_core_v1_Pod",
+		},
+	}
+
+	for _, tCase := range testCases {
+		assert.Equal(t, convert2DGVK(tCase.gvr).reverseString(), tCase.reverseString)
 	}
 }

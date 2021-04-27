@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package utils
 
 import (
@@ -16,15 +32,22 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	commontypes "github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha2"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	oamtypes "github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/controller/common"
+	"github.com/oam-dev/kubevela/pkg/dsl/definition"
 	"github.com/oam-dev/kubevela/pkg/oam"
+	"github.com/oam-dev/kubevela/pkg/oam/discoverymapper"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 )
 
@@ -160,7 +183,7 @@ func StoreInSet(disableCaps string) mapset.Set {
 }
 
 // GetAppNextRevision will generate the next revision name and revision number for application
-func GetAppNextRevision(app *v1alpha2.Application) (string, int64) {
+func GetAppNextRevision(app *v1beta1.Application) (string, int64) {
 	if app == nil {
 		// should never happen
 		return "", 0
@@ -231,4 +254,85 @@ func ComputeSpecHash(spec interface{}) (string, error) {
 	}
 	specHashLabel := strconv.FormatUint(specHash, 16)
 	return specHashLabel, nil
+}
+
+// RefreshPackageDiscover help refresh package discover
+func RefreshPackageDiscover(dm discoverymapper.DiscoveryMapper, pd *definition.PackageDiscover, workloadGVK commontypes.WorkloadGVK,
+	workloadref commontypes.DefinitionReference, def oamtypes.CapType) error {
+	var gvk schema.GroupVersionKind
+	var err error
+	switch def {
+	case oamtypes.TypeComponentDefinition:
+		gv, err := schema.ParseGroupVersion(workloadGVK.APIVersion)
+		if err != nil {
+			return err
+		}
+		gvk = gv.WithKind(workloadGVK.Kind)
+	case oamtypes.TypeTrait:
+		gvk, err = util.GetGVKFromDefinition(dm, workloadref)
+		if err != nil {
+			return err
+		}
+	case oamtypes.TypeWorkload, oamtypes.TypeScope:
+	}
+	targetGVK := metav1.GroupVersionKind{
+		Group:   gvk.Group,
+		Version: gvk.Version,
+		Kind:    gvk.Kind,
+	}
+	if exist := pd.Exist(targetGVK); exist {
+		return nil
+	}
+
+	if err := pd.RefreshKubePackagesFromCluster(); err != nil {
+		return err
+	}
+
+	// Test whether the refresh is successful
+	if exist := pd.Exist(targetGVK); !exist {
+		return fmt.Errorf("get CRD %s error", targetGVK.String())
+	}
+	return nil
+}
+
+// CheckAppDeploymentUsingAppRevision get all appDeployments using appRevisions related the app
+func CheckAppDeploymentUsingAppRevision(ctx context.Context, c client.Reader, appNs string, appName string) ([]string, error) {
+	deployOpts := []client.ListOption{
+		client.InNamespace(appNs),
+	}
+	var res []string
+	ads := new(v1beta1.AppDeploymentList)
+	if err := c.List(ctx, ads, deployOpts...); err != nil {
+		return nil, err
+	}
+	if len(ads.Items) == 0 {
+		return res, nil
+	}
+	relatedRevs := new(v1beta1.ApplicationRevisionList)
+	revOpts := []client.ListOption{
+		client.InNamespace(appNs),
+		client.MatchingLabels{oam.LabelAppName: appName},
+	}
+	if err := c.List(ctx, relatedRevs, revOpts...); err != nil {
+		return nil, err
+	}
+	if len(relatedRevs.Items) == 0 {
+		return res, nil
+	}
+	revName := map[string]bool{}
+	for _, rev := range relatedRevs.Items {
+		if len(rev.Name) != 0 {
+			revName[rev.Name] = true
+		}
+	}
+	for _, d := range ads.Items {
+		for _, dr := range d.Spec.AppRevisions {
+			if len(dr.RevisionName) != 0 {
+				if revName[dr.RevisionName] {
+					res = append(res, dr.RevisionName)
+				}
+			}
+		}
+	}
+	return res, nil
 }

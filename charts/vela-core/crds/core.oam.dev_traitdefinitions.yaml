@@ -5,23 +5,26 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.2.4
-  creationTimestamp: null
   name: traitdefinitions.core.oam.dev
 spec:
   group: core.oam.dev
   names:
     categories:
-    - crossplane
     - oam
     kind: TraitDefinition
     listKind: TraitDefinitionList
     plural: traitdefinitions
+    shortNames:
+    - trait
     singular: traitdefinition
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.definitionRef.name
-      name: DEFINITION-NAME
+    - jsonPath: .spec.appliesToWorkloads
+      name: APPLIES-TO
+      type: string
+    - jsonPath: .metadata.annotations.definition\.oam\.dev/description
+      name: DESCRIPTION
       type: string
     name: v1alpha2
     schema:
@@ -65,6 +68,9 @@ spec:
                 description: Extension is used for extension needs by OAM platform builders
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
+              podDisruptive:
+                description: PodDisruptive specifies whether using the trait will cause the pod to restart or not.
+                type: boolean
               revisionEnabled:
                 description: Revision indicates whether a trait is aware of component revision
                 type: boolean
@@ -94,6 +100,49 @@ spec:
                     required:
                     - release
                     - repository
+                    type: object
+                  kube:
+                    description: Kube defines the encapsulation in raw Kubernetes resource format
+                    properties:
+                      parameters:
+                        description: Parameters defines configurable parameters
+                        items:
+                          description: A KubeParameter defines a configurable parameter of a component.
+                          properties:
+                            description:
+                              description: Description of this parameter.
+                              type: string
+                            fieldPaths:
+                              description: "FieldPaths specifies an array of fields within this workload that will be overwritten by the value of this parameter. \tAll fields must be of the same type. Fields are specified as JSON field paths without a leading dot, for example 'spec.replicas'."
+                              items:
+                                type: string
+                              type: array
+                            name:
+                              description: Name of this parameter
+                              type: string
+                            required:
+                              default: false
+                              description: Required specifies whether or not a value for this parameter must be supplied when authoring an Application.
+                              type: boolean
+                            type:
+                              description: 'ValueType indicates the type of the parameter value, and only supports basic data types: string, number, boolean.'
+                              enum:
+                              - string
+                              - number
+                              - boolean
+                              type: string
+                          required:
+                          - fieldPaths
+                          - name
+                          - type
+                          type: object
+                        type: array
+                      template:
+                        description: Template defines the raw Kubernetes resource
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - template
                     type: object
                 type: object
               status:
@@ -144,6 +193,21 @@ spec:
               configMapRef:
                 description: ConfigMapRef refer to a ConfigMap which contains OpenAPI V3 JSON schema of Component parameters.
                 type: string
+              latestRevision:
+                description: LatestRevision of the trait definition
+                properties:
+                  name:
+                    type: string
+                  revision:
+                    format: int64
+                    type: integer
+                  revisionHash:
+                    description: RevisionHash record the hash value of the spec of ApplicationRevision object.
+                    type: string
+                required:
+                - name
+                - revision
+                type: object
             type: object
         type: object
     served: true
@@ -151,8 +215,11 @@ spec:
     subresources:
       status: {}
   - additionalPrinterColumns:
-    - jsonPath: .spec.definitionRef.name
-      name: DEFINITION-NAME
+    - jsonPath: .spec.appliesToWorkloads
+      name: APPLIES-TO
+      type: string
+    - jsonPath: .metadata.annotations.definition\.oam\.dev/description
+      name: DESCRIPTION
       type: string
     name: v1beta1
     schema:
@@ -196,6 +263,9 @@ spec:
                 description: Extension is used for extension needs by OAM platform builders
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
+              podDisruptive:
+                description: PodDisruptive specifies whether using the trait will cause the pod to restart or not.
+                type: boolean
               revisionEnabled:
                 description: Revision indicates whether a trait is aware of component revision
                 type: boolean
@@ -225,6 +295,49 @@ spec:
                     required:
                     - release
                     - repository
+                    type: object
+                  kube:
+                    description: Kube defines the encapsulation in raw Kubernetes resource format
+                    properties:
+                      parameters:
+                        description: Parameters defines configurable parameters
+                        items:
+                          description: A KubeParameter defines a configurable parameter of a component.
+                          properties:
+                            description:
+                              description: Description of this parameter.
+                              type: string
+                            fieldPaths:
+                              description: "FieldPaths specifies an array of fields within this workload that will be overwritten by the value of this parameter. \tAll fields must be of the same type. Fields are specified as JSON field paths without a leading dot, for example 'spec.replicas'."
+                              items:
+                                type: string
+                              type: array
+                            name:
+                              description: Name of this parameter
+                              type: string
+                            required:
+                              default: false
+                              description: Required specifies whether or not a value for this parameter must be supplied when authoring an Application.
+                              type: boolean
+                            type:
+                              description: 'ValueType indicates the type of the parameter value, and only supports basic data types: string, number, boolean.'
+                              enum:
+                              - string
+                              - number
+                              - boolean
+                              type: string
+                          required:
+                          - fieldPaths
+                          - name
+                          - type
+                          type: object
+                        type: array
+                      template:
+                        description: Template defines the raw Kubernetes resource
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - template
                     type: object
                 type: object
               status:
@@ -275,6 +388,21 @@ spec:
               configMapRef:
                 description: ConfigMapRef refer to a ConfigMap which contains OpenAPI V3 JSON schema of Component parameters.
                 type: string
+              latestRevision:
+                description: LatestRevision of the component definition
+                properties:
+                  name:
+                    type: string
+                  revision:
+                    format: int64
+                    type: integer
+                  revisionHash:
+                    description: RevisionHash record the hash value of the spec of ApplicationRevision object.
+                    type: string
+                required:
+                - name
+                - revision
+                type: object
             type: object
         type: object
     served: true
