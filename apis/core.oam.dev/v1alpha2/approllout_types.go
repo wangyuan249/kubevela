@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The KubeVela Authors.
+Copyright 2021 The KubeVela Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,12 +24,11 @@ import (
 
 // AppRolloutSpec defines how to describe an upgrade between different apps
 type AppRolloutSpec struct {
-	// TargetAppRevisionName contains the name of the applicationConfiguration that we need to upgrade to.
-	// Here we use an applicationConfiguration as a revision of an application, thus the name alone is suffice
+	// TargetAppRevisionName contains the name of the applicationRevision that we need to upgrade to.
 	TargetAppRevisionName string `json:"targetAppRevisionName"`
 
-	// SourceAppRevisionName contains the name of the applicationConfiguration that we need to upgrade from.
-	// it can be empty only when it's the first time to deploy the application
+	// SourceAppRevisionName contains the name of the applicationRevision that we need to upgrade from.
+	// it can be empty only when the rolling is only a scale event
 	SourceAppRevisionName string `json:"sourceAppRevisionName,omitempty"`
 
 	// The list of component to upgrade in the application.
@@ -62,8 +61,14 @@ type AppRolloutStatus struct {
 
 // AppRollout is the Schema for the AppRollout API
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:categories={oam}
+// +kubebuilder:resource:categories={oam},shortName=approllout
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="TARGET",type=string,JSONPath=`.status.rolloutStatus.rolloutTargetSize`
+// +kubebuilder:printcolumn:name="UPGRADED",type=string,JSONPath=`.status.rolloutStatus.upgradedReplicas`
+// +kubebuilder:printcolumn:name="READY",type=string,JSONPath=`.status.rolloutStatus.upgradedReadyReplicas`
+// +kubebuilder:printcolumn:name="BATCH-STATE",type=string,JSONPath=`.status.rolloutStatus.batchRollingState`
+// +kubebuilder:printcolumn:name="ROLLING-STATE",type=string,JSONPath=`.status.rolloutStatus.rollingState`
+// +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=".metadata.creationTimestamp"
 type AppRollout struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

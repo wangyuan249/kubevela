@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package cue
 
 import (
@@ -10,8 +26,8 @@ import (
 	"github.com/oam-dev/kubevela/apis/types"
 )
 
-// para struct contains the parameter
-const specValue = "parameter"
+// ParameterTag is the keyword in CUE template to define users' input
+var ParameterTag = "parameter"
 
 // GetParameters get parameter from cue template
 func GetParameters(templateStr string) ([]types.Parameter, error) {
@@ -29,7 +45,7 @@ func GetParameters(templateStr string) ([]types.Parameter, error) {
 	var found bool
 	for i := 0; i < tempStruct.Len(); i++ {
 		paraDef = tempStruct.Field(i)
-		if paraDef.Name == specValue {
+		if paraDef.Name == ParameterTag {
 			found = true
 			break
 		}

@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package plugins
 
 import (
@@ -29,9 +45,10 @@ var _ = Describe("DefinitionFiles", func() {
 	deployment := types.Capability{
 		Namespace:   "testdef",
 		Name:        DeployName,
-		Type:        types.TypeWorkload,
+		Type:        types.TypeComponentDefinition,
 		CrdName:     "deployments.apps",
 		Description: "description not defined",
+		Category:    types.CUECategory,
 		Parameters: []types.Parameter{
 			{
 				Type: cue.ListKind,
@@ -62,8 +79,9 @@ var _ = Describe("DefinitionFiles", func() {
 	websvc := types.Capability{
 		Namespace:   "testdef",
 		Name:        WebserviceName,
-		Type:        types.TypeWorkload,
+		Type:        types.TypeComponentDefinition,
 		Description: "description not defined",
+		Category:    types.CUECategory,
 		Parameters: []types.Parameter{{
 			Name: "env", Type: cue.ListKind,
 		}, {
@@ -92,10 +110,10 @@ var _ = Describe("DefinitionFiles", func() {
 
 	// Notice!!  DefinitionPath Object is Cluster Scope object
 	// which means objects created in other DefinitionNamespace will also affect here.
-	It("getworkload", func() {
-		workloadDefs, _, err := GetWorkloadsFromCluster(context.Background(), DefinitionNamespace, common.Args{Config: cfg, Schema: scheme}, selector)
+	It("getcomponents", func() {
+		workloadDefs, _, err := GetComponentsFromCluster(context.Background(), DefinitionNamespace, common.Args{Config: cfg, Schema: scheme}, selector)
 		Expect(err).Should(BeNil())
-		logf.Log.Info(fmt.Sprintf("Getting workload definitions  %v", workloadDefs))
+		logf.Log.Info(fmt.Sprintf("Getting component definitions  %v", workloadDefs))
 		for i := range workloadDefs {
 			// CueTemplate should always be fulfilled, even those whose CueTemplateURI is assigend,
 			By("check CueTemplate is fulfilled")

@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package cli
 
 import (
@@ -59,10 +75,14 @@ func NewCapabilityShowCommand(c common.Args, ioStreams cmdutil.IOStreams) *cobra
 			}
 			ctx := context.Background()
 			capabilityName := args[0]
+			velaEnv, err := GetEnv(cmd)
+			if err != nil {
+				return err
+			}
 			if webSite {
 				return startReferenceDocsSite(ctx, c, ioStreams, capabilityName)
 			}
-			return showReferenceConsole(ctx, c, ioStreams, capabilityName)
+			return ShowReferenceConsole(ctx, c, ioStreams, capabilityName, velaEnv.Namespace)
 		},
 		Annotations: map[string]string{
 			types.TagCommandType: types.TypeStart,
@@ -110,10 +130,20 @@ func startReferenceDocsSite(ctx context.Context, c common.Args, ioStreams cmduti
 		}
 	}
 	if !capabilityIsValid {
-		return fmt.Errorf("%s is not a valid workload type or trait", capabilityName)
+		return fmt.Errorf("%s is not a valid component type or trait", capabilityName)
 	}
-	ref := &plugins.MarkdownReference{}
-	if err := ref.CreateMarkdown(capabilities, docsPath, plugins.ReferenceSourcePath); err != nil {
+
+	cli, err := c.GetClient()
+	if err != nil {
+		return err
+	}
+	ref := &plugins.MarkdownReference{
+		ParseReference: plugins.ParseReference{
+			Client: cli,
+		},
+	}
+
+	if err := ref.CreateMarkdown(ctx, capabilities, docsPath, plugins.ReferenceSourcePath); err != nil {
 		return err
 	}
 
@@ -144,7 +174,7 @@ func startReferenceDocsSite(ctx context.Context, c common.Args, ioStreams cmduti
 		capabilityPath = plugins.TraitPath
 	case types.TypeScope:
 	case types.TypeComponentDefinition:
-		// TODO: add ComponentDefinition
+		capabilityPath = plugins.ComponentDefinitionTypePath
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1%s/#/%s/%s", Port, capabilityPath, capabilityName)
@@ -188,16 +218,16 @@ func launch(server *http.Server, errChan chan<- error) {
 
 func generateSideBar(capabilities []types.Capability, docsPath string) error {
 	sideBar := filepath.Join(docsPath, SideBar)
-	workloads, traits := getWorkloadsAndTraits(capabilities)
+	components, traits := getComponentsAndTraits(capabilities)
 	f, err := os.Create(sideBar)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString("- Workload Types\n"); err != nil {
+	if _, err := f.WriteString("- Components Types\n"); err != nil {
 		return err
 	}
-	for _, w := range workloads {
-		if _, err := f.WriteString(fmt.Sprintf("  - [%s](%s/%s.md)\n", w, plugins.WorkloadTypePath, w)); err != nil {
+	for _, c := range components {
+		if _, err := f.WriteString(fmt.Sprintf("  - [%s](%s/%s.md)\n", c, plugins.ComponentDefinitionTypePath, c)); err != nil {
 			return err
 		}
 	}
@@ -275,19 +305,19 @@ func generateREADME(capabilities []types.Capability, docsPath string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString("# KubeVela Reference Docs for Workload Types and Traits\n" +
+	if _, err := f.WriteString("# KubeVela Reference Docs for Component Types and Traits\n" +
 		"Click the navigation bar on the left or the links below to look into the detailed referennce of a Workload type or a Trait.\n"); err != nil {
 		return err
 	}
 
-	workloads, traits := getWorkloadsAndTraits(capabilities)
+	workloads, traits := getComponentsAndTraits(capabilities)
 
-	if _, err := f.WriteString("## Workload Types\n"); err != nil {
+	if _, err := f.WriteString("## Component Types\n"); err != nil {
 		return err
 	}
 
 	for _, w := range workloads {
-		if _, err := f.WriteString(fmt.Sprintf("  - [%s](%s/%s.md)\n", w, plugins.WorkloadTypePath, w)); err != nil {
+		if _, err := f.WriteString(fmt.Sprintf("  - [%s](%s/%s.md)\n", w, plugins.ComponentDefinitionTypePath, w)); err != nil {
 			return err
 		}
 	}
@@ -303,44 +333,52 @@ func generateREADME(capabilities []types.Capability, docsPath string) error {
 	return nil
 }
 
-func getWorkloadsAndTraits(capabilities []types.Capability) ([]string, []string) {
-	var workloads, traits []string
+func getComponentsAndTraits(capabilities []types.Capability) ([]string, []string) {
+	var components, traits []string
 	for _, c := range capabilities {
 		switch c.Type {
-		case types.TypeWorkload:
-			workloads = append(workloads, c.Name)
+		case types.TypeComponentDefinition:
+			components = append(components, c.Name)
 		case types.TypeTrait:
 			traits = append(traits, c.Name)
 		case types.TypeScope:
-		case types.TypeComponentDefinition:
-			// TODO get ComponentDefinitions
+		case types.TypeWorkload:
 		}
 	}
-	return workloads, traits
+	return components, traits
 }
 
-func showReferenceConsole(ctx context.Context, c common.Args, ioStreams cmdutil.IOStreams, capabilityName string) error {
-	home, err := system.GetVelaHomeDir()
+// ShowReferenceConsole will show capability reference in console
+func ShowReferenceConsole(ctx context.Context, c common.Args, ioStreams cmdutil.IOStreams, capabilityName string, ns string) error {
+	capability, err := plugins.SyncDefinitionToLocal(ctx, c, capabilityName, ns)
 	if err != nil {
 		return err
 	}
-	referenceHome := filepath.Join(home, "reference")
 
-	definitionPath := filepath.Join(referenceHome, "capabilities")
-	if _, err := os.Stat(definitionPath); err != nil && os.IsNotExist(err) {
-		if err := os.MkdirAll(definitionPath, 0750); err != nil {
+	cli, err := c.GetClient()
+	if err != nil {
+		return err
+	}
+	ref := &plugins.ConsoleReference{
+		ParseReference: plugins.ParseReference{
+			Client: cli,
+		},
+	}
+
+	var propertyConsole []plugins.ConsoleReference
+	switch capability.Category {
+	case types.HelmCategory:
+		_, propertyConsole, err = ref.GenerateHELMProperties(ctx, capability)
+		if err != nil {
 			return err
 		}
-	}
-	capability, err := plugins.SyncDefinitionToLocal(ctx, c, definitionPath, capabilityName)
-	if err != nil {
-		return err
-	}
-
-	ref := &plugins.ConsoleReference{}
-	propertyConsole, err := ref.GenerateCapabilityProperties(capability)
-	if err != nil {
-		return err
+	case types.CUECategory:
+		propertyConsole, err = ref.GenerateCUETemplateProperties(capability)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupport capability category %s", capability.Category)
 	}
 	for _, p := range propertyConsole {
 		ioStreams.Info(p.TableName)

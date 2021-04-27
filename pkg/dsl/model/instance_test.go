@@ -1,22 +1,70 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package model
 
 import (
+	"fmt"
 	"testing"
 
 	"cuelang.org/go/cue"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	mycue "github.com/oam-dev/kubevela/pkg/cue"
 )
 
-func TestIndexMatchLine(t *testing.T) {
-	assert.Equal(t, IndexMatchLine("ax", "1"), "")
-	assert.Equal(t, IndexMatchLine("", "_|_"), "")
-	assert.Equal(t, IndexMatchLine("_|_", "_|_"), "_|_")
-	assert.Equal(t, IndexMatchLine("abc_|_xyz", "_|_"), "abc_|_xyz")
-	assert.Equal(t, IndexMatchLine("abc\n123_|_\nxyz", "_|_"), "123_|_")
-	assert.Equal(t, IndexMatchLine("abc\n_|_123\nxyz", "_|_"), "_|_123")
-	assert.Equal(t, IndexMatchLine("abc\n123_|_456\nxyz", "_|_"), "123_|_456")
+func TestGetCompileError(t *testing.T) {
+	testcases := []struct {
+		src     string
+		wantErr bool
+		errInfo string
+	}{{
+		src: ` env: [{
+	name:  "HELLO"
+	value: "_A_|_B_|_C_"
+}]`,
+		wantErr: false,
+		errInfo: "",
+	}, {
+		src: ` env: [{
+	name:  conflicting
+	value:  _|_ // conflicting values "ENV_LEVEL" and "JAVA_TOOL_OPTIONS"
+}]`,
+		wantErr: true,
+		errInfo: "_|_ // conflicting values \"ENV_LEVEL\" and \"JAVA_TOOL_OPTIONS\"",
+	}, {
+		src: ` env: [{
+	name:  conflicting-1
+	value:  _|_ // conflicting values "ENV_LEVEL" and "JAVA_TOOL_OPTIONS"
+	},{
+	name:  conflicting-2
+	value:  _|_ // conflicting values "HELLO" and "WORLD"
+}]`,
+		wantErr: true,
+		errInfo: "_|_ // conflicting values \"ENV_LEVEL\" and \"JAVA_TOOL_OPTIONS\"," +
+			"_|_ // conflicting values \"HELLO\" and \"WORLD\"",
+	}}
+	for _, tt := range testcases {
+		errInfo, contains := IndexMatchLine(tt.src, "_|_")
+		assert.Equal(t, tt.wantErr, contains)
+		assert.Equal(t, tt.errInfo, errInfo)
+	}
+
 }
 
 func TestInstance(t *testing.T) {
@@ -148,7 +196,7 @@ metadata: name: parameter.name
 `,
 	}
 	_, err = ins.Unstructured()
-	assert.Equal(t, err.Error(), `metadata.name: reference "parameter" not found`)
+	assert.Equal(t, err.Error(), fmt.Sprintf(`metadata.name: reference "%s" not found`, mycue.ParameterTag))
 	ins = &instance{
 		v: `
 apiVersion: "apps/v1"

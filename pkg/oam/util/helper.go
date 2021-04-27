@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package util
 
 import (
@@ -8,6 +24,7 @@ import (
 	"hash/fnv"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +47,7 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha2"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/discoverymapper"
 )
@@ -79,8 +97,21 @@ const (
 	// ErrUpdateCapabilityInConfigMap is the error while creating or updating a capability
 	ErrUpdateCapabilityInConfigMap = "cannot create or update capability %s in ConfigMap: %v"
 
+	// ErrUpdateComponentDefinition is the error while update ComponentDefinition
+	ErrUpdateComponentDefinition = "cannot update ComponentDefinition %s: %v"
+	// ErrUpdateTraitDefinition is the error while update TraitDefinition
+	ErrUpdateTraitDefinition = "cannot update TraitDefinition %s: %v"
+
 	// ErrCreateConvertedWorklaodDefinition is the error while apply a WorkloadDefinition
 	ErrCreateConvertedWorklaodDefinition = "cannot create converted WorkloadDefinition %s: %v"
+
+	// ErrRefreshPackageDiscover is the error while refresh PackageDiscover
+	ErrRefreshPackageDiscover = "cannot discover the open api of the CRD : %v"
+
+	// ErrGenerateDefinitionRevision is the error while generate DefinitionRevision
+	ErrGenerateDefinitionRevision = "cannot generate DefinitionRevision of %s: %v"
+	// ErrCreateOrUpdateDefinitionRevision is the error while create or update DefinitionRevision
+	ErrCreateOrUpdateDefinitionRevision = "cannot create or update DefinitionRevision %s: %v"
 )
 
 // WorkloadType describe the workload type of ComponentDefinition
@@ -89,6 +120,9 @@ type WorkloadType string
 const (
 	// ComponentDef describe a workload of Defined by ComponentDefinition
 	ComponentDef WorkloadType = "ComponentDef"
+
+	// KubeDef describe a workload refer to raw K8s resource
+	KubeDef WorkloadType = "KubeDef"
 
 	// HELMDef describe a workload refer to HELM
 	HELMDef WorkloadType = "HelmDef"
@@ -113,24 +147,37 @@ type ConditionedObject interface {
 
 // LocateParentAppConfig locate the parent application configuration object
 func LocateParentAppConfig(ctx context.Context, client client.Client, oamObject oam.Object) (oam.Object, error) {
-	var acName string
-	var eventObj = &v1alpha2.ApplicationConfiguration{}
+
 	// locate the appConf name from the owner list
 	for _, o := range oamObject.GetOwnerReferences() {
 		if o.Kind == v1alpha2.ApplicationConfigurationKind {
-			acName = o.Name
-			break
+			var eventObj = &v1alpha2.ApplicationConfiguration{}
+			acName := o.Name
+			if len(acName) > 0 {
+				nn := types.NamespacedName{
+					Name:      acName,
+					Namespace: oamObject.GetNamespace(),
+				}
+				if err := client.Get(ctx, nn, eventObj); err != nil {
+					return nil, err
+				}
+				return eventObj, nil
+			}
 		}
-	}
-	if len(acName) > 0 {
-		nn := types.NamespacedName{
-			Name:      acName,
-			Namespace: oamObject.GetNamespace(),
+		if o.Kind == v1alpha2.ApplicationContextKind {
+			var eventObj = &v1alpha2.ApplicationContext{}
+			appName := o.Name
+			if len(appName) > 0 {
+				nn := types.NamespacedName{
+					Name:      appName,
+					Namespace: oamObject.GetNamespace(),
+				}
+				if err := client.Get(ctx, nn, eventObj); err != nil {
+					return nil, err
+				}
+				return eventObj, nil
+			}
 		}
-		if err := client.Get(ctx, nn, eventObj); err != nil {
-			return nil, err
-		}
-		return eventObj, nil
 	}
 	return nil, errors.Errorf(ErrLocateAppConfig)
 }
@@ -314,7 +361,7 @@ func fetchChildResources(ctx context.Context, mLog logr.Logger, r client.Reader,
 		crs := unstructured.UnstructuredList{}
 		crs.SetAPIVersion(wcr.APIVersion)
 		crs.SetKind(wcr.Kind)
-		mLog.Info("List child resource kind", "APIVersion", wcr.APIVersion, "Kind", wcr.Kind, "owner UID",
+		mLog.Info("List child resource kind", "APIVersion", wcr.APIVersion, "Type", wcr.Kind, "owner UID",
 			workload.GetUID())
 		if err := r.List(ctx, &crs, client.InNamespace(workload.GetNamespace()),
 			client.MatchingLabels(wcr.Selector)); err != nil {
@@ -509,6 +556,19 @@ func RawExtension2Unstructured(raw *runtime.RawExtension) (*unstructured.Unstruc
 	}, nil
 }
 
+// RawExtension2AppConfig converts runtime.RawExtention to ApplicationConfiguration
+func RawExtension2AppConfig(raw runtime.RawExtension) (*v1alpha2.ApplicationConfiguration, error) {
+	ac := &v1alpha2.ApplicationConfiguration{}
+	b, err := raw.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(b, ac); err != nil {
+		return nil, err
+	}
+	return ac, nil
+}
+
 // Object2Map turn the Object to a map
 func Object2Map(obj interface{}) (map[string]interface{}, error) {
 	var res map[string]interface{}
@@ -648,8 +708,8 @@ func MergeMapOverrideWithDst(src, dst map[string]string) map[string]string {
 }
 
 // ConvertComponentDef2WorkloadDef help convert a ComponentDefinition to WorkloadDefinition
-func ConvertComponentDef2WorkloadDef(dm discoverymapper.DiscoveryMapper, componentDef *v1alpha2.ComponentDefinition,
-	workloadDef *v1alpha2.WorkloadDefinition) error {
+func ConvertComponentDef2WorkloadDef(dm discoverymapper.DiscoveryMapper, componentDef *v1beta1.ComponentDefinition,
+	workloadDef *v1beta1.WorkloadDefinition) error {
 	if len(componentDef.Spec.Workload.Type) > 1 {
 		return errors.New("No need to convert ComponentDefinition")
 	}
@@ -670,4 +730,42 @@ func ConvertComponentDef2WorkloadDef(dm discoverymapper.DiscoveryMapper, compone
 	workloadDef.Spec.Status = componentDef.Spec.Status
 	workloadDef.Spec.Schematic = componentDef.Spec.Schematic
 	return nil
+}
+
+// ExtractRevisionNum  extract revision number from appRevision name
+func ExtractRevisionNum(appRevision string) (int, error) {
+	splits := strings.Split(appRevision, "-")
+	// check some bad appRevision name, eg:v1, appv2
+	if len(splits) == 1 {
+		return 0, fmt.Errorf("bad revison name")
+	}
+	// check some bad appRevision name, eg:myapp-a1
+	if !strings.HasPrefix(splits[len(splits)-1], "v") {
+		return 0, fmt.Errorf("bad revison name")
+	}
+	return strconv.Atoi(strings.TrimPrefix(splits[len(splits)-1], "v"))
+}
+
+// Min for int
+func Min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Max for int
+func Max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// Abs for int
+func Abs(a int) int {
+	if a < 0 {
+		return -a
+	}
+	return a
 }

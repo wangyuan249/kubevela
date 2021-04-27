@@ -1,8 +1,25 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package definition
 
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,12 +37,26 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+const (
+	// BuiltinPackageDomain Specify the domain of the built-in package
+	BuiltinPackageDomain = "kube"
+	// K8sResourcePrefix Indicates that the definition comes from kubernetes
+	K8sResourcePrefix = "io_k8s_api_"
+)
+
 // PackageDiscover defines the inner CUE packages loaded from K8s cluster
 type PackageDiscover struct {
 	velaBuiltinPackages []*build.Instance
-	pkgKinds            map[string][]string
+	pkgKinds            map[string][]VersionKind
 	mutex               sync.RWMutex
 	client              *rest.RESTClient
+}
+
+// VersionKind contains the resource metadata and reference name
+type VersionKind struct {
+	DefinitionName string
+	APIVersion     string
+	Kind           string
 }
 
 // NewPackageDiscover will create a PackageDiscover client with the K8s config file.
@@ -36,7 +67,7 @@ func NewPackageDiscover(config *rest.Config) (*PackageDiscover, error) {
 	}
 	pd := &PackageDiscover{
 		client:   client,
-		pkgKinds: make(map[string][]string),
+		pkgKinds: make(map[string][]VersionKind),
 	}
 	if err = pd.RefreshKubePackagesFromCluster(); err != nil {
 		return nil, err
@@ -51,6 +82,27 @@ func (pd *PackageDiscover) ImportBuiltinPackagesFor(bi *build.Instance) {
 	bi.Imports = append(bi.Imports, pd.velaBuiltinPackages...)
 }
 
+// ImportPackagesAndBuildInstance Combine import built-in packages and build cue template together to avoid data race
+func (pd *PackageDiscover) ImportPackagesAndBuildInstance(bi *build.Instance) (inst *cue.Instance, err error) {
+	pd.ImportBuiltinPackagesFor(bi)
+
+	var r cue.Runtime
+	pd.mutex.Lock()
+	defer pd.mutex.Unlock()
+	cueInst, err := r.Build(bi)
+	if err != nil {
+		return nil, err
+	}
+	return cueInst, err
+}
+
+// ListPackageKinds list packages and their kinds
+func (pd *PackageDiscover) ListPackageKinds() map[string][]VersionKind {
+	pd.mutex.RLock()
+	defer pd.mutex.RUnlock()
+	return pd.pkgKinds
+}
+
 // RefreshKubePackagesFromCluster will use K8s client to load/refresh all K8s open API as a reference kube package using in template
 func (pd *PackageDiscover) RefreshKubePackagesFromCluster() error {
 	body, err := pd.client.Get().AbsPath("/openapi/v2").Do(context.Background()).Raw()
@@ -62,13 +114,17 @@ func (pd *PackageDiscover) RefreshKubePackagesFromCluster() error {
 
 // Exist checks if the GVK exists in the built-in packages
 func (pd *PackageDiscover) Exist(gvk metav1.GroupVersionKind) bool {
+	dgvk := convert2DGVK(gvk)
 	// package name equals to importPath
-	importPath := genPackageName(gvk.Group, gvk.Version)
+	importPath := genStandardPkgName(dgvk)
 	pd.mutex.RLock()
 	defer pd.mutex.RUnlock()
-	pkgKinds := pd.pkgKinds[importPath]
-	for _, k := range pkgKinds {
-		if k == gvk.Kind {
+	pkgKinds, ok := pd.pkgKinds[importPath]
+	if !ok {
+		pkgKinds = pd.pkgKinds[genOpenPkgName(dgvk)]
+	}
+	for _, v := range pkgKinds {
+		if v.Kind == dgvk.Kind {
 			return true
 		}
 	}
@@ -76,11 +132,12 @@ func (pd *PackageDiscover) Exist(gvk metav1.GroupVersionKind) bool {
 }
 
 // mount will mount the new parsed package into PackageDiscover built-in packages
-func (pd *PackageDiscover) mount(pkg *pkgInstance, pkgKinds []string) {
+func (pd *PackageDiscover) mount(pkg *pkgInstance, pkgKinds []VersionKind) {
 	pd.mutex.Lock()
 	defer pd.mutex.Unlock()
 	for i, p := range pd.velaBuiltinPackages {
 		if p.ImportPath == pkg.ImportPath {
+			pd.pkgKinds[pkg.ImportPath] = pkgKinds
 			pd.velaBuiltinPackages[i] = pkg.Instance
 			return
 		}
@@ -89,13 +146,37 @@ func (pd *PackageDiscover) mount(pkg *pkgInstance, pkgKinds []string) {
 	pd.velaBuiltinPackages = append(pd.velaBuiltinPackages, pkg.Instance)
 }
 
+func (pd *PackageDiscover) pkgBuild(packages map[string]*pkgInstance, pkgName string,
+	dGVK domainGroupVersionKind, def string, kubePkg *pkgInstance, groupKinds map[string][]VersionKind) error {
+	pkg, ok := packages[pkgName]
+	if !ok {
+		pkg = newPackage(pkgName)
+		pkg.Imports = []*build.Instance{kubePkg.Instance}
+	}
+
+	mykinds := groupKinds[pkgName]
+	mykinds = append(mykinds, VersionKind{
+		APIVersion:     dGVK.APIVersion,
+		Kind:           dGVK.Kind,
+		DefinitionName: "#" + dGVK.Kind,
+	})
+
+	if err := pkg.AddFile(dGVK.reverseString(), def); err != nil {
+		return err
+	}
+
+	packages[pkgName] = pkg
+	groupKinds[pkgName] = mykinds
+	return nil
+}
+
 func (pd *PackageDiscover) addKubeCUEPackagesFromCluster(apiSchema string) error {
 	var r cue.Runtime
 	oaInst, err := r.Compile("-", apiSchema)
 	if err != nil {
 		return err
 	}
-	kinds := map[string]metav1.GroupVersionKind{}
+	dgvkMapper := make(map[string]domainGroupVersionKind)
 	pathValue := oaInst.Value().Lookup("paths")
 	if pathValue.Exists() {
 		if st, err := pathValue.Struct(); err == nil {
@@ -104,8 +185,8 @@ func (pd *PackageDiscover) addKubeCUEPackagesFromCluster(apiSchema string) error
 				gvk := iter.Value().Lookup("post",
 					"x-kubernetes-group-version-kind")
 				if gvk.Exists() {
-					if v, err := getGVK(gvk); err == nil {
-						kinds["#"+v.Kind] = v
+					if v, err := getDGVK(gvk); err == nil {
+						dgvkMapper[v.reverseString()] = v
 					}
 				}
 			}
@@ -113,55 +194,53 @@ func (pd *PackageDiscover) addKubeCUEPackagesFromCluster(apiSchema string) error
 	}
 	oaFile, err := jsonschema.Extract(oaInst, &jsonschema.Config{
 		Root: "#/definitions",
-		Map:  openAPIMapping,
+		Map:  openAPIMapping(dgvkMapper),
 	})
 	if err != nil {
 		return err
 	}
+	kubePkg := newPackage("kube")
+	kubePkg.processOpenAPIFile(oaFile)
+	if err := kubePkg.AddSyntax(oaFile); err != nil {
+		return err
+	}
 	packages := make(map[string]*pkgInstance)
-	groupKinds := make(map[string][]string)
+	groupKinds := make(map[string][]VersionKind)
 
-	for k, v := range kinds {
-		apiVersion := v.Version
-		if v.Group != "" {
-			apiVersion = v.Group + "/" + apiVersion
-		}
-		def := fmt.Sprintf(`%s: {
+	for k := range dgvkMapper {
+		v := dgvkMapper[k]
+		apiVersion := v.APIVersion
+		def := fmt.Sprintf(`
+import "kube"
+
+#%s: kube.%s & {
 kind: "%s"
 apiVersion: "%s",
-}`, k, v.Kind, apiVersion)
-		pkgName := genPackageName(v.Group, v.Version)
-		pkg, ok := packages[pkgName]
-		if !ok {
-			pkg = newPackage(pkgName)
-		}
+}`, v.Kind, k, v.Kind, apiVersion)
 
-		mykinds := groupKinds[pkgName]
-		mykinds = append(mykinds, v.Kind)
-
-		if err := pkg.AddFile(k, def); err != nil {
+		if err := pd.pkgBuild(packages, genStandardPkgName(v), v, def, kubePkg, groupKinds); err != nil {
 			return err
 		}
-		packages[pkgName] = pkg
-		groupKinds[pkgName] = mykinds
+		if err := pd.pkgBuild(packages, genOpenPkgName(v), v, def, kubePkg, groupKinds); err != nil {
+			return err
+		}
 	}
 	for name, pkg := range packages {
-		pkg.processOpenAPIFile(oaFile)
-		if err = pkg.AddSyntax(oaFile); err != nil {
-			return err
-		}
 		pd.mount(pkg, groupKinds[name])
 	}
 	return nil
 }
 
-func genPackageName(group, version string) string {
-	res := []string{"kube"}
-	if group != "" {
-		res = append(res, group)
+func genOpenPkgName(v domainGroupVersionKind) string {
+	return BuiltinPackageDomain + "/" + v.APIVersion
+}
+
+func genStandardPkgName(v domainGroupVersionKind) string {
+	res := []string{v.Group, v.Version}
+	if v.Domain != "" {
+		res = []string{v.Domain, v.Group, v.Version}
 	}
-	// version should never be empty
-	res = append(res, version)
+
 	return strings.Join(res, "/")
 }
 
@@ -191,18 +270,56 @@ func getClusterOpenAPIClient(config *rest.Config) (*rest.RESTClient, error) {
 	return rest.UnversionedRESTClientFor(&copyConfig)
 }
 
-func openAPIMapping(pos token.Pos, a []string) ([]ast.Label, error) {
-	if len(a) < 2 {
-		return nil, errors.New("openAPIMapping format invalid")
+func openAPIMapping(dgvkMapper map[string]domainGroupVersionKind) func(pos token.Pos, a []string) ([]ast.Label, error) {
+	return func(pos token.Pos, a []string) ([]ast.Label, error) {
+		if len(a) < 2 {
+			return nil, errors.New("openAPIMapping format invalid")
+		}
+
+		name := strings.ReplaceAll(a[1], ".", "_")
+		name = strings.ReplaceAll(name, "-", "_")
+		if _, ok := dgvkMapper[name]; !ok && strings.HasPrefix(name, K8sResourcePrefix) {
+			trimName := strings.TrimPrefix(name, K8sResourcePrefix)
+			if v, ok := dgvkMapper[trimName]; ok {
+				v.Domain = "k8s.io"
+				dgvkMapper[name] = v
+				delete(dgvkMapper, trimName)
+			}
+		}
+
+		if strings.HasSuffix(a[1], ".JSONSchemaProps") && pos != token.NoPos {
+			return []ast.Label{ast.NewIdent("_")}, nil
+		}
+
+		return []ast.Label{ast.NewIdent(name)}, nil
 	}
 
-	spl := strings.Split(a[1], ".")
-	name := spl[len(spl)-1]
+}
 
-	if name == "JSONSchemaProps" && pos != token.NoPos {
-		return []ast.Label{ast.NewIdent("_")}, nil
+type domainGroupVersionKind struct {
+	Domain     string
+	Group      string
+	Version    string
+	Kind       string
+	APIVersion string
+}
+
+func (dgvk domainGroupVersionKind) reverseString() string {
+	var s = []string{dgvk.Kind, dgvk.Version}
+	s = append(s, strings.Split(dgvk.Group, ".")...)
+	domain := dgvk.Domain
+	if domain == "k8s.io" {
+		domain = "api.k8s.io"
 	}
-	return []ast.Label{ast.NewIdent("#" + name)}, nil
+
+	if domain != "" {
+		s = append(s, strings.Split(domain, ".")...)
+	}
+
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+	return strings.ReplaceAll(strings.Join(s, "_"), "-", "_")
 }
 
 type pkgInstance struct {
@@ -212,7 +329,7 @@ type pkgInstance struct {
 func newPackage(name string) *pkgInstance {
 	return &pkgInstance{
 		&build.Instance{
-			PkgName:    name,
+			PkgName:    filepath.Base(name),
 			ImportPath: name,
 		},
 	}
@@ -248,17 +365,45 @@ func (pkg *pkgInstance) processOpenAPIFile(f *ast.File) {
 	}
 }
 
-func getGVK(v cue.Value) (metav1.GroupVersionKind, error) {
-	ret := metav1.GroupVersionKind{}
-	var err error
-	ret.Group, err = v.Lookup("group").String()
+func getDGVK(v cue.Value) (ret domainGroupVersionKind, err error) {
+	gvk := metav1.GroupVersionKind{}
+	gvk.Group, err = v.Lookup("group").String()
 	if err != nil {
-		return ret, err
+		return
 	}
-	ret.Version, err = v.Lookup("version").String()
+	gvk.Version, err = v.Lookup("version").String()
 	if err != nil {
-		return ret, err
+		return
 	}
-	ret.Kind, err = v.Lookup("kind").String()
-	return ret, err
+
+	gvk.Kind, err = v.Lookup("kind").String()
+	if err != nil {
+		return
+	}
+
+	ret = convert2DGVK(gvk)
+	return
+}
+
+func convert2DGVK(gvk metav1.GroupVersionKind) domainGroupVersionKind {
+	ret := domainGroupVersionKind{
+		Version:    gvk.Version,
+		Kind:       gvk.Kind,
+		APIVersion: gvk.Version,
+	}
+	if gvk.Group == "" {
+		ret.Group = "core"
+		ret.Domain = "k8s.io"
+	} else {
+		ret.APIVersion = gvk.Group + "/" + ret.APIVersion
+		sv := strings.Split(gvk.Group, ".")
+		// Domain must contain dot
+		if len(sv) > 2 {
+			ret.Domain = strings.Join(sv[1:], ".")
+			ret.Group = sv[0]
+		} else {
+			ret.Group = gvk.Group
+		}
+	}
+	return ret
 }

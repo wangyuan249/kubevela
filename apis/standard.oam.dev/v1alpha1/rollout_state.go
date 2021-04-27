@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
@@ -19,6 +35,15 @@ const (
 
 	// RollingRetriableFailureEvent indicates that we encountered an unexpected but retriable error
 	RollingRetriableFailureEvent RolloutEvent = "RollingRetriableFailureEvent"
+
+	// AppLocatedEvent indicates that apps are located successfully
+	AppLocatedEvent RolloutEvent = "AppLocatedEvent"
+
+	// RollingModifiedEvent indicates that the rolling target or source has changed
+	RollingModifiedEvent RolloutEvent = "RollingModifiedEvent"
+
+	// RollingDeletedEvent indicates that the rolling is being deleted
+	RollingDeletedEvent RolloutEvent = "RollingDeletedEvent"
 
 	// RollingSpecVerifiedEvent indicates that we have successfully verified that the rollout spec
 	RollingSpecVerifiedEvent RolloutEvent = "RollingSpecVerifiedEvent"
@@ -65,6 +90,10 @@ const (
 	RolloutFinalizing runtimev1alpha1.ConditionType = "RolloutFinalizing"
 	// RolloutFailing means the rollout is failing
 	RolloutFailing runtimev1alpha1.ConditionType = "RolloutFailing"
+	// RolloutAbandoning means that the rollout is being abandoned.
+	RolloutAbandoning runtimev1alpha1.ConditionType = "RolloutAbandoning"
+	// RolloutDeleting means that the rollout is being deleted.
+	RolloutDeleting runtimev1alpha1.ConditionType = "RolloutDeleting"
 	// RolloutFailed means that the rollout failed.
 	RolloutFailed runtimev1alpha1.ConditionType = "RolloutFailed"
 	// RolloutSucceed means that the rollout is done.
@@ -142,8 +171,11 @@ func (r *RolloutStatus) getRolloutConditionType() runtimev1alpha1.ConditionType 
 	case RolloutFailingState:
 		return RolloutFailing
 
-	case RolloutFailedState:
-		return RolloutFailed
+	case RolloutAbandoningState:
+		return RolloutAbandoning
+
+	case RolloutDeletingState:
+		return RolloutDeleting
 
 	case RolloutSucceedState:
 		return RolloutSucceed
@@ -157,12 +189,6 @@ func (r *RolloutStatus) getRolloutConditionType() runtimev1alpha1.ConditionType 
 func (r *RolloutStatus) RolloutRetry(reason string) {
 	// we can still retry, no change on the state
 	r.SetConditions(NewNegativeCondition(r.getRolloutConditionType(), reason))
-}
-
-// RolloutModified is special state transition as we allow it to happen at any time
-func (r *RolloutStatus) RolloutModified() {
-	r.SetRolloutCondition(NewNegativeCondition(r.getRolloutConditionType(), "Rollout Spec is modified"))
-	r.ResetStatus()
 }
 
 // RolloutFailed is a special state transition since we need an error message
@@ -183,9 +209,9 @@ func (r *RolloutStatus) RolloutFailing(reason string) {
 // ResetStatus resets the status of the rollout to start from beginning
 func (r *RolloutStatus) ResetStatus() {
 	r.NewPodTemplateIdentifier = ""
-	r.RolloutTargetTotalSize = -1
+	r.RolloutTargetSize = -1
 	r.LastAppliedPodTemplateIdentifier = ""
-	r.RollingState = VerifyingSpecState
+	r.RollingState = LocatingTargetAppState
 	r.BatchRollingState = BatchInitializingState
 	r.CurrentBatch = 0
 	r.UpgradedReplicas = 0
@@ -216,7 +242,11 @@ func (r *RolloutStatus) SetRolloutCondition(new runtimev1alpha1.Condition) {
 	if !exists {
 		r.Conditions = append(r.Conditions, new)
 	}
+}
 
+// we can't panic since it will crash the other controllers
+func (r *RolloutStatus) illegalStateTransition(err error) {
+	r.RolloutFailed(err.Error())
 }
 
 // StateTransition is the center place to do rollout state transition
@@ -233,9 +263,45 @@ func (r *RolloutStatus) StateTransition(event RolloutEvent) {
 			"post batch rolling state", r.BatchRollingState)
 	}()
 
-	// we have special transition for these two types of event
+	// we have special transition for these types of event since they require additional info
 	if event == RollingFailedEvent || event == RollingRetriableFailureEvent {
-		panic(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+		return
+	}
+	// special handle modified event here
+	if event == RollingModifiedEvent {
+		if r.RollingState == RolloutDeletingState {
+			r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+			return
+		}
+		if r.RollingState == RolloutFailedState || r.RollingState == RolloutSucceedState {
+			r.ResetStatus()
+		} else {
+			r.SetRolloutCondition(NewNegativeCondition(r.getRolloutConditionType(), "Rollout Spec is modified"))
+			r.RollingState = RolloutAbandoningState
+			r.BatchRollingState = BatchInitializingState
+		}
+		return
+	}
+
+	// special handle deleted event here, it can happen at many states
+	if event == RollingDeletedEvent {
+		if r.RollingState == RolloutFailedState || r.RollingState == RolloutSucceedState {
+			r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+			return
+		}
+		r.SetRolloutCondition(NewNegativeCondition(r.getRolloutConditionType(), "Rollout is being deleted"))
+		r.RollingState = RolloutDeletingState
+		r.BatchRollingState = BatchInitializingState
+		return
+	}
+
+	// special handle appLocatedEvent event here, it only applies to one state but it's legal to happen at other states
+	if event == AppLocatedEvent {
+		if r.RollingState == LocatingTargetAppState {
+			r.RollingState = VerifyingSpecState
+		}
+		return
 	}
 
 	switch rollingState {
@@ -245,7 +311,7 @@ func (r *RolloutStatus) StateTransition(event RolloutEvent) {
 			r.RollingState = InitializingState
 			return
 		}
-		panic(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
 
 	case InitializingState:
 		if event == RollingInitializedEvent {
@@ -254,11 +320,27 @@ func (r *RolloutStatus) StateTransition(event RolloutEvent) {
 			r.BatchRollingState = BatchInitializingState
 			return
 		}
-		panic(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
 
 	case RollingInBatchesState:
 		r.batchStateTransition(event)
 		return
+
+	case RolloutAbandoningState:
+		if event == RollingFinalizedEvent {
+			r.SetRolloutCondition(NewPositiveCondition(r.getRolloutConditionType()))
+			r.ResetStatus()
+			return
+		}
+		r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+
+	case RolloutDeletingState:
+		if event == RollingFinalizedEvent {
+			r.SetRolloutCondition(NewPositiveCondition(r.getRolloutConditionType()))
+			r.RollingState = RolloutFailedState
+			return
+		}
+		r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
 
 	case FinalisingState:
 		if event == RollingFinalizedEvent {
@@ -266,7 +348,7 @@ func (r *RolloutStatus) StateTransition(event RolloutEvent) {
 			r.RollingState = RolloutSucceedState
 			return
 		}
-		panic(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
 
 	case RolloutFailingState:
 		if event == RollingFinalizedEvent {
@@ -274,16 +356,13 @@ func (r *RolloutStatus) StateTransition(event RolloutEvent) {
 			r.RollingState = RolloutFailedState
 			return
 		}
-		panic(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
 
-	case RolloutSucceedState:
-		panic(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
-
-	case RolloutFailedState:
-		panic(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
+	case RolloutSucceedState, RolloutFailedState:
+		r.illegalStateTransition(fmt.Errorf(invalidRollingStateTransition, rollingState, event))
 
 	default:
-		panic(fmt.Errorf("invalid rolling state %s", rollingState))
+		r.illegalStateTransition(fmt.Errorf("invalid rolling state %s before transition", rollingState))
 	}
 }
 
@@ -302,7 +381,7 @@ func (r *RolloutStatus) batchStateTransition(event RolloutEvent) {
 			r.BatchRollingState = BatchInRollingState
 			return
 		}
-		panic(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
 
 	case BatchInRollingState:
 		if event == RolloutOneBatchEvent {
@@ -310,7 +389,7 @@ func (r *RolloutStatus) batchStateTransition(event RolloutEvent) {
 			r.BatchRollingState = BatchVerifyingState
 			return
 		}
-		panic(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
 
 	case BatchVerifyingState:
 		if event == OneBatchAvailableEvent {
@@ -318,7 +397,7 @@ func (r *RolloutStatus) batchStateTransition(event RolloutEvent) {
 			r.BatchRollingState = BatchFinalizingState
 			return
 		}
-		panic(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
 
 	case BatchFinalizingState:
 		if event == FinishedOneBatchEvent {
@@ -333,7 +412,7 @@ func (r *RolloutStatus) batchStateTransition(event RolloutEvent) {
 			r.RollingState = FinalisingState
 			return
 		}
-		panic(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
 
 	case BatchReadyState:
 		if event == BatchRolloutApprovedEvent {
@@ -342,9 +421,9 @@ func (r *RolloutStatus) batchStateTransition(event RolloutEvent) {
 			r.CurrentBatch++
 			return
 		}
-		panic(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
+		r.illegalStateTransition(fmt.Errorf(invalidBatchRollingStateTransition, batchRollingState, event))
 
 	default:
-		panic(fmt.Errorf("invalid batch rolling state %s", batchRollingState))
+		r.illegalStateTransition(fmt.Errorf("invalid batch rolling state %s", batchRollingState))
 	}
 }

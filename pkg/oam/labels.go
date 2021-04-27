@@ -23,6 +23,8 @@ const (
 	LabelAppName = "app.oam.dev/name"
 	// LabelAppRevision records the name of Application, it's equal to name of AppConfig created by Application
 	LabelAppRevision = "app.oam.dev/appRevision"
+	// LabelAppDeployment records the name of AppDeployment.
+	LabelAppDeployment = "app.oam.dev/appDeployment"
 	// LabelAppComponent records the name of Component
 	LabelAppComponent = "app.oam.dev/component"
 	// LabelAppComponentRevision records the revision name of Component
@@ -38,6 +40,11 @@ const (
 	TraitTypeLabel = "trait.oam.dev/type"
 	// TraitResource indicates which resource it is when a trait is composed by multiple resources in KubeVela
 	TraitResource = "trait.oam.dev/resource"
+
+	// LabelComponentDefinitionName records the name of ComponentDefinition
+	LabelComponentDefinitionName = "componentdefinition.oam.dev/name"
+	// LabelComponentDefinitionName records the name of TraitDefinition
+	LabelTraitDefinitionName = "trait.oam.dev/name"
 )
 
 const (
@@ -58,6 +65,10 @@ const (
 	// AnnotationAppRollout indicates that the application is still rolling out
 	// the application controller should treat it differently
 	AnnotationAppRollout = "app.oam.dev/rollout-template"
+
+	// AnnotationInplaceUpgrade indicates the workload should upgrade with the the same name
+	// the name of the workload instance should not changing along with the revision
+	AnnotationInplaceUpgrade = "app.oam.dev/inplace-upgrade"
 
 	// AnnotationRollingComponent indicates that the component is rolling out
 	// this is to enable any concerned controllers to handle the first component apply logic differently

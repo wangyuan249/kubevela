@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package e2e
 
 import (
@@ -21,6 +37,18 @@ var (
 		return ginkgo.Context(context, func() {
 			ginkgo.It("should print environment initiation successful message", func() {
 				cli := fmt.Sprintf("vela env init %s", envName)
+				output, err := Exec(cli)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				expectedOutput := fmt.Sprintf("environment %s created,", envName)
+				gomega.Expect(output).To(gomega.ContainSubstring(expectedOutput))
+			})
+		})
+	}
+
+	EnvInitWithNamespaceOptionContext = func(context string, envName string, namespace string) bool {
+		return ginkgo.Context(context, func() {
+			ginkgo.It("should print environment initiation successful message", func() {
+				cli := fmt.Sprintf("vela env init %s --namespace %s", envName, namespace)
 				output, err := Exec(cli)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				expectedOutput := fmt.Sprintf("environment %s created,", envName)
@@ -162,6 +190,16 @@ var (
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(r.Code).Should(gomega.Equal(http.StatusOK))
 				gomega.Expect(r.Data.(string)).To(gomega.ContainSubstring("created"))
+			})
+		})
+	}
+
+	ShowCapabilityReference = func(context string, capabilityName string) bool {
+		return ginkgo.Context(context, func() {
+			ginkgo.It("should show capability reference", func() {
+				cli := fmt.Sprintf("vela show %s", capabilityName)
+				_, err := Exec(cli)
+				gomega.Expect(err).Should(gomega.BeNil())
 			})
 		})
 	}

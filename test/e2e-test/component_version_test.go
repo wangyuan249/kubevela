@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package controllers_test
 
 import (
@@ -296,6 +312,7 @@ var _ = Describe("Versioning mechanism of components", func() {
 			By("Check ContainerizedWorkload workload's image field has been changed to v2")
 			cwWlV2 := &v1alpha2.ContainerizedWorkload{}
 			Eventually(func() string {
+				requestReconcileNow(ctx, &appConfigWithRevisionName)
 				k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: componentName}, cwWlV2)
 				return cwWlV2.Spec.Containers[0].Image
 			}, time.Second*60, time.Microsecond*500).Should(Equal(imageV2))
@@ -322,6 +339,11 @@ var _ = Describe("Versioning mechanism of components", func() {
 			Expect(common.ReadYamlToObject("testdata/revision/comp-v1.yaml", &comp1)).Should(BeNil())
 			Expect(k8sClient.Create(ctx, &comp1)).Should(Succeed())
 
+			By("Check component should already existed")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, client.ObjectKey{Namespace: comp1.Namespace, Name: comp1.Name}, &v1alpha2.Component{})
+			}, time.Second*10, time.Microsecond*500).Should(BeNil())
+
 			By("Create AppConfig with component")
 			var appconfig v1alpha2.ApplicationConfiguration
 			Expect(common.ReadYamlToObject("testdata/revision/app.yaml", &appconfig)).Should(BeNil())
@@ -341,7 +363,7 @@ var _ = Describe("Versioning mechanism of components", func() {
 			var w1 unstructured.Unstructured
 			Eventually(
 				func() error {
-					reconcileAppConfigNow(ctx, &appconfig)
+					requestReconcileNow(ctx, &appconfig)
 					w1.SetAPIVersion("example.com/v1")
 					w1.SetKind("Bar")
 					return k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: revisionNameV1}, &w1)
@@ -373,11 +395,12 @@ var _ = Describe("Versioning mechanism of components", func() {
 			var w2 unstructured.Unstructured
 			Eventually(
 				func() error {
+					requestReconcileNow(ctx, &appconfig)
 					w2.SetAPIVersion("example.com/v1")
 					w2.SetKind("Bar")
 					return k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: revisionNameV2}, &w2)
 				},
-				time.Second*100, time.Millisecond*500).Should(BeNil())
+				time.Second*30, time.Millisecond*500).Should(BeNil())
 			k2, _, _ := unstructured.NestedString(w2.Object, "spec", "key")
 			Expect(k2).Should(BeEquivalentTo("v2"), fmt.Sprintf("%v", w2.Object))
 
@@ -459,6 +482,7 @@ var _ = Describe("Versioning mechanism of components", func() {
 			var w2 unstructured.Unstructured
 			Eventually(
 				func() string {
+					requestReconcileNow(ctx, &appconfig)
 					w2.SetAPIVersion("example.com/v1")
 					w2.SetKind("Bar")
 					err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: componentName}, &w2)
@@ -468,7 +492,7 @@ var _ = Describe("Versioning mechanism of components", func() {
 					k2, _, _ := unstructured.NestedString(w2.Object, "spec", "key")
 					return k2
 				},
-				time.Second*120, time.Millisecond*500).Should(BeEquivalentTo("v2"))
+				time.Second*30, time.Millisecond*500).Should(BeEquivalentTo("v2"))
 
 			By("Check AppConfig status")
 			Eventually(

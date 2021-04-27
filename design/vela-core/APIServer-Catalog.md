@@ -27,7 +27,7 @@ This design is based on and tries to resolve the following use cases:
 
 The overall architecture diagram:
 
-![alt](../../docs/resources/apiserver-arch.jpg)
+![alt](../../docs/en/resources/apiserver-arch.jpg)
 
 Here's some explanation of the diagram:
 
@@ -39,19 +39,19 @@ Here's some explanation of the diagram:
 
 The above architecture implies that the Vela APIServer could be used to multiple k8s clusters and catalogs. Below is what a deployment of Vela platform would look like:
 
-![alt](../../docs/resources/api-workflow.png)
+![alt](../../docs/en/resources/api-workflow.png)
 
 ### 2. API Design
 
 Below is the overall architecture of API grouping and storage:
 
-![alt](../../docs/resources/api-arch.jpg)
+![alt](../../docs/en/resources/api-arch.jpg)
 
 There are two distinguished layers:
 - **API layer**: It defines the API discovery and serving endpoints that Vela APIServer implementation must follow. This is the integration point for external system components (e.g. UI) to contact.
 - **Storage layer**: It describes the storage systems and objects that Vela APIServer syncs data with behind the scene. There are three types of storage:
   - **K8s cluster**: Vela APIServer manages multiple k8s clusters with regard to the applications and definitions custom resources.
-  - **Catalog server**: Vela APIServer manages mulitple catalogs which contain COTS application pacakges. Currently in our use case the catalogs resides in Git repos. In the future we can extend this to other catalog storage like file server, object storage.
+  - **Catalog server**: Vela APIServer manages multiple catalogs which contain COTS application pacakges. Currently in our use case the catalogs resides in Git repos. In the future we can extend this to other catalog storage like file server, object storage.
   - **MySQL database**: Vela APIServer stores global, cross-cluster, cross catalog information in a MySQL database. These data do not exist in k8s or catalog and thus need to be managed by APIServer in a separate database. The database is usually hosted on cloud.
 
 #### Environment API
@@ -313,7 +313,7 @@ Under the hood, APIServer will rescan the catalog.
 
 Vela APIServer aggregates package information from multiple catalog servers. To download a package, the user first requests the APIServer to find the location of the catalog and the package. Then the user visits the catalog repo directly to download the package data. The workflow is shown as below:
 
-![alt](../../docs/resources/catalog-workflow.jpg)
+![alt](../../docs/en/resources/catalog-workflow.jpg)
 
 In our future roadmap, we will build a catalog controller for each k8s cluster. Then we will add API endpoint to install the package in APIServer which basically creates a CR to trigger the controller to reconcile package installation into the cluster. We choose this instead of APIServer installing the package because in this way we can bypass the APIServer in the package data transfer path and avoid APIServer becoming a single point of failure.
 

@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package util_test
 
 import (
@@ -27,6 +43,7 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha2"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/mock"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
@@ -1902,11 +1919,11 @@ func TestGetScopeDefiniton(t *testing.T) {
 
 func TestConvertComponentDef2WorkloadDef(t *testing.T) {
 	var noNeedErr = errors.New("No need to convert ComponentDefinition")
-	var cd = v1alpha2.ComponentDefinition{}
+	var cd = v1beta1.ComponentDefinition{}
 	mapper := mock.NewMockDiscoveryMapper()
 
 	var componentDefWithWorkloadType = `
-apiVersion: core.oam.dev/v1alpha2
+apiVersion: core.oam.dev/v1beta1
 kind: ComponentDefinition
 metadata:
   name: cd-with-workload-type
@@ -1917,11 +1934,11 @@ spec:
 
 	err := yaml.Unmarshal([]byte(componentDefWithWorkloadType), &cd)
 	assert.Equal(t, nil, err)
-	err = util.ConvertComponentDef2WorkloadDef(mapper, &cd, &v1alpha2.WorkloadDefinition{})
+	err = util.ConvertComponentDef2WorkloadDef(mapper, &cd, &v1beta1.WorkloadDefinition{})
 	assert.Equal(t, noNeedErr.Error(), err.Error())
 
 	var componentDefWithWrongDefinition = `
-apiVersion: core.oam.dev/v1alpha2
+apiVersion: core.oam.dev/v1beta1
 kind: ComponentDefinition
 metadata:
   name: worker
@@ -1931,10 +1948,10 @@ spec:
       apiVersion: /apps/v1/
       kind: Deployment
 `
-	cd = v1alpha2.ComponentDefinition{}
+	cd = v1beta1.ComponentDefinition{}
 	err = yaml.Unmarshal([]byte(componentDefWithWrongDefinition), &cd)
 	assert.Equal(t, nil, err)
-	err = util.ConvertComponentDef2WorkloadDef(mapper, &cd, &v1alpha2.WorkloadDefinition{})
+	err = util.ConvertComponentDef2WorkloadDef(mapper, &cd, &v1beta1.WorkloadDefinition{})
 	assert.Error(t, err)
 
 	mapper.MockRESTMapping = mock.NewMockRESTMapping("deployments")
@@ -1978,7 +1995,7 @@ spec:
         }
 `
 	var componentDefWithDefinition = `
-apiVersion: core.oam.dev/v1alpha2
+apiVersion: core.oam.dev/v1beta1
 kind: ComponentDefinition
 metadata:
   name: worker
@@ -2000,7 +2017,7 @@ spec:
       isHealth: (context.output.status.readyReplicas > 0) && (context.output.status.readyReplicas == context.output.status.replicas)` + Template
 
 	var expectWorkloadDef = `
-apiVersion: core.oam.dev/v1alpha2
+apiVersion: core.oam.dev/v1beta1
 kind: WorkloadDefinition
 metadata:
   name: worker
@@ -2019,13 +2036,13 @@ spec:
   status:
     healthPolicy: |
       isHealth: (context.output.status.readyReplicas > 0) && (context.output.status.readyReplicas == context.output.status.replicas)` + Template
-	cd = v1alpha2.ComponentDefinition{}
-	wd := &v1alpha2.WorkloadDefinition{}
+	cd = v1beta1.ComponentDefinition{}
+	wd := &v1beta1.WorkloadDefinition{}
 	err = yaml.Unmarshal([]byte(componentDefWithDefinition), &cd)
 	assert.NoError(t, err)
 	err = util.ConvertComponentDef2WorkloadDef(mapper, &cd, wd)
 	assert.NoError(t, err)
-	expectWd := v1alpha2.WorkloadDefinition{}
+	expectWd := v1beta1.WorkloadDefinition{}
 	err = yaml.Unmarshal([]byte(expectWorkloadDef), &expectWd)
 	assert.NoError(t, err)
 	assert.Equal(t, expectWd.Namespace, wd.Namespace)
@@ -2036,4 +2053,51 @@ spec:
 	assert.Equal(t, expectWd.Spec.ChildResourceKinds, wd.Spec.ChildResourceKinds)
 	assert.Equal(t, expectWd.Spec.Status, wd.Spec.Status)
 	assert.Equal(t, expectWd.Spec.Schematic, wd.Spec.Schematic)
+}
+
+func TestExtractRevisionNum(t *testing.T) {
+	testcases := []struct {
+		appRevision     string
+		wantRevisionNum int
+		hasError        bool
+	}{{
+		appRevision:     "myapp-v1",
+		wantRevisionNum: 1,
+		hasError:        false,
+	}, {
+		appRevision:     "new-app-v2",
+		wantRevisionNum: 2,
+		hasError:        false,
+	}, {
+		appRevision:     "v1-v10",
+		wantRevisionNum: 10,
+		hasError:        false,
+	}, {
+		appRevision:     "v10-v1-v1",
+		wantRevisionNum: 1,
+		hasError:        false,
+	}, {
+		appRevision:     "myapp-v1-v2",
+		wantRevisionNum: 2,
+		hasError:        false,
+	}, {
+		appRevision:     "myapp-v1-vv",
+		wantRevisionNum: 0,
+		hasError:        true,
+	}, {
+		appRevision:     "v1",
+		wantRevisionNum: 0,
+		hasError:        true,
+	}, {
+		appRevision:     "myapp-a1",
+		wantRevisionNum: 0,
+		hasError:        true,
+	}}
+
+	for _, tt := range testcases {
+		revision, err := util.ExtractRevisionNum(tt.appRevision)
+		hasError := err != nil
+		assert.Equal(t, tt.wantRevisionNum, revision)
+		assert.Equal(t, tt.hasError, hasError)
+	}
 }

@@ -14,20 +14,6 @@
  limitations under the License.
 */
 
-/*
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package v1beta1
 
 import (
@@ -171,7 +157,7 @@ type PlacementStatus struct {
 type AppDeploymentSpec struct {
 
 	// Traffic defines the traffic rules to apply across revisions.
-	Traffic Traffic `json:"traffic,omitempty"`
+	Traffic *Traffic `json:"traffic,omitempty"`
 
 	// AppRevision specifies  AppRevision resources to and the rules to apply to them.
 	AppRevisions []AppRevision `json:"appRevisions,omitempty"`
@@ -192,7 +178,7 @@ type AppDeploymentStatus struct {
 
 // AppDeployment is the Schema for the AppDeployment API
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:categories={oam}
+// +kubebuilder:resource:categories={oam},shortName=appdeploy
 // +kubebuilder:subresource:status
 type AppDeployment struct {
 	metav1.TypeMeta   `json:",inline"`

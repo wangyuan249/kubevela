@@ -25,6 +25,7 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	crdv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -33,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	oamCore "github.com/oam-dev/kubevela/apis/core.oam.dev"
+	"github.com/oam-dev/kubevela/pkg/dsl/definition"
 	"github.com/oam-dev/kubevela/pkg/oam/discoverymapper"
 )
 
@@ -41,6 +43,7 @@ var k8sClient client.Client
 var testEnv *envtest.Environment
 var controllerDone chan struct{}
 var r Reconciler
+var defRevisionLimit = 5
 
 func TestComponentDefinition(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -63,6 +66,7 @@ var _ = BeforeSuite(func(done Done) {
 
 	err = oamCore.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	Expect(crdv1.AddToScheme(scheme.Scheme)).Should(BeNil())
 
 	By("Create the k8s client")
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
@@ -80,11 +84,15 @@ var _ = BeforeSuite(func(done Done) {
 	Expect(err).ToNot(HaveOccurred())
 	_, err = dm.Refresh()
 	Expect(err).ToNot(HaveOccurred())
+	pd, err := definition.NewPackageDiscover(cfg)
+	Expect(err).ToNot(HaveOccurred())
 
 	r = Reconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		dm:     dm,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		dm:          dm,
+		pd:          pd,
+		defRevLimit: defRevisionLimit,
 	}
 	Expect(r.SetupWithManager(mgr)).ToNot(HaveOccurred())
 	controllerDone = make(chan struct{}, 1)
@@ -109,5 +117,5 @@ func reconcileRetry(r reconcile.Reconciler, req reconcile.Request) {
 	Eventually(func() error {
 		_, err := r.Reconcile(req)
 		return err
-	}, 3*time.Second, time.Second).Should(BeNil())
+	}, 15*time.Second, time.Second).Should(BeNil())
 }
