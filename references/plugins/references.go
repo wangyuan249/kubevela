@@ -560,7 +560,10 @@ func (ref *ParseReference) parseParameters(paraValue cue.Value, paramKey string,
 			if def, ok := val.Default(); ok && def.IsConcrete() {
 				param.Default = mycue.GetDefault(def)
 			}
-			param.Short, param.Usage, param.Alias = mycue.RetrieveComments(val)
+			param.Short, param.Usage, param.Alias, param.Ignore = mycue.RetrieveComments(val)
+			if param.Ignore != "" {
+				continue
+			}
 			param.Type = val.IncompleteKind()
 			switch val.IncompleteKind() {
 			case cue.StructKind:
